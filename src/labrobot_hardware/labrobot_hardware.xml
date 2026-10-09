@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- The plugin name here must match the <plugin> element in
+     labrobot.ros2_control.xacro exactly, or controller_manager fails to load
+     the hardware with an unhelpful "class not available" message. -->
+<library path="labrobot_hardware">
+  <class name="labrobot_hardware/RMCS2303SystemHardware"
+         type="labrobot_hardware::RMCS2303SystemHardware"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      ros2_control SystemInterface for the labrobot drivetrain. Exchanges framed
+      binary messages with an Arduino Mega, which owns the two RMCS-2303 MODBUS
+      links and their 9600-baud timing.
+    </description>
+  </class>
+</library>

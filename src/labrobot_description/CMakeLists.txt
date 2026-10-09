@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.8)
+project(labrobot_description)
+
+find_package(ament_cmake REQUIRED)
+
+# This is a resource-only package: install the description, configuration and
+# launch files into the package share directory.
+install(
+  DIRECTORY urdf meshes config rviz launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+endif()
+
+ament_package()

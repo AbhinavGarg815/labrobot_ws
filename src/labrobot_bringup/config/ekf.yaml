@@ -1,0 +1,132 @@
+# robot_localization EKF: wheel odometry fused with the D435i gyro.
+#
+# Publishes odom -> base_footprint. diff_drive_controller must therefore have
+# enable_odom_tf: false, or the two fight over the same TF edge and the result
+# jitters between whichever published last.
+#
+# What is fused, and what is deliberately not
+# -------------------------------------------
+# Wheel odometry contributes vx and vyaw - VELOCITIES, not absolute pose. Fusing
+# its x/y/yaw as well would feed the EKF its own integrated drift back as if it
+# were an independent measurement, and the filter would grow confident in an
+# error it created.
+#
+# The IMU contributes vyaw ONLY. Specifically not:
+#   * orientation - there is no magnetometer, so absolute yaw is unobservable and
+#     the Madgwick estimate drifts freely. Fusing it would anchor the EKF to a
+#     drifting reference.
+#   * linear acceleration - measured 27 mg of bias (+0.93% scale error on
+#     gravity). Double-integrating that gives metres of phantom translation
+#     within a minute.
+# The gyro's yaw rate is the one signal on this IMU that is genuinely good:
+# 0.1-0.14 deg/s of noise, and its 0.099 deg/s bias is small and estimable.
+#
+# Why fuse a gyro at all when the wheels already give vyaw: wheel odometry cannot
+# see slip. On these swivel castors a direction change kicks the robot sideways
+# ~14 mm without the wheels registering anything. The gyro sees that rotation
+# directly, so the two disagree exactly when the wheels are wrong.
+#
+# WHEEL vyaw IS NOT FUSED AT ALL. Measured against floor marks, 2026-08-03:
+#
+#   spin       wheel says   gyro says   truth      wheel error
+#   360 deg    360.70       316.42      ~315       +14.5%
+#   360 deg    360.70       346.42        -
+#   360 deg    360.66       337.02        -
+#   360 deg    360.78       340.83        -
+#   1800 deg   1800.76      1711.96       -         +4.9%
+#
+# The drive wheels slip against four swivel castors that catch and release rather
+# than swivelling freely. The error is 4-12% per revolution, RANDOM in size and
+# in where it occurs, and it does NOT shrink with speed - 0.1 rad/s (63 s for one
+# revolution) still lost 20 deg. So it is not a calibration error and
+# wheel_separation_multiplier cannot fix it; fitting one to this is fitting noise.
+#
+# Leaving vyaw in the config with a huge covariance would "work" - the gyro
+# outvotes it 3750:1 - but it would misrepresent the design. Nothing here uses
+# the wheels for rotation, and a future reader tempted to rebalance the
+# covariances should know the wheel figure is not merely noisy but unusable.
+# Translation (vx) is unaffected: forward distance agreed to 0.1 mm.
+
+ekf_filter_node:
+  ros__parameters:
+    frequency: 50.0
+    sensor_timeout: 0.2
+    # Planar robot: force z, roll and pitch to zero rather than estimating them.
+    # It removes three states that only noise could move, and stops depth or IMU
+    # noise from slowly lifting the robot off its own floor.
+    two_d_mode: true
+
+    publish_tf: true
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom
+
+    # --- wheel odometry -----------------------------------------------------
+    odom0: /diff_drive_controller/odom
+    #      x      y      z
+    #      roll   pitch  yaw
+    #      vx     vy     vz
+    #      vroll  vpitch vyaw
+    #      ax     ay     az
+    # vx ONLY. vyaw is deliberately NOT fused - see the measurement below.
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, false,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+    # The controller reports velocity honestly; it is the integrated POSE that
+    # drifts, and we are not fusing that.
+    odom0_nodelay: true
+
+    # --- IMU ----------------------------------------------------------------
+    # From imu_bias_compensator, NOT the driver and NOT imu_filter_madgwick.
+    #
+    # Measured: the raw yaw bias is +0.107 deg/s, which is 6.4 deg per MINUTE of
+    # heading drift while standing still - worse than wheel odometry alone.
+    # Neither of the obvious candidates removes it:
+    #   * robot_localization has no gyro-bias states in its model;
+    #   * imu_filter_madgwick estimates a bias but applies it only to its
+    #     ORIENTATION output and republishes angular_velocity untouched
+    #     (verified: raw +0.1072 in, filtered +0.1072 out, 0% removed).
+    # Hence a dedicated node. It also fills in angular_velocity_covariance,
+    # which the driver leaves at zero - and a zero covariance reads to an EKF as
+    # "infinitely trustworthy", so the filter would ignore the wheels entirely.
+    imu0: /imu/unbiased
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 20
+    # The driver does not remove gravity, but since no acceleration is fused it
+    # does not matter. Left explicit so the intent is not mistaken for oversight.
+    imu0_remove_gravitational_acceleration: true
+
+    # --- process noise ------------------------------------------------------
+    # Only the diagonal, and only the states two_d_mode actually estimates:
+    # x, y, yaw, vx, vy, vyaw. The out-of-plane entries are large because those
+    # states are pinned anyway.
+    process_noise_covariance: [0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.06, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.02, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.025, 0.0, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.025, 0.0, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.04, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.02, 0.0,  0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,
+                               0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.015]
+
+    print_diagnostics: true
+    debug: false

@@ -1,0 +1,160 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <gazebo>
+    <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+      <parameters>$(arg controllers_config)</parameters>
+      <robot_param>robot_description</robot_param>
+      <robot_param_node>robot_state_publisher</robot_param_node>
+    </plugin>
+  </gazebo>
+
+  <gazebo reference="base_link">
+    <material>Gazebo/Silver</material>
+    <mu1>0.0</mu1>
+    <mu2>0.0</mu2>
+  </gazebo>
+
+  <gazebo reference="left_wheel_link">
+    <material>Gazebo/DarkGrey</material>
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <kp>100000000.0</kp>
+    <kd>550000.0</kd>
+  </gazebo>
+
+  <gazebo reference="right_wheel_link">
+    <material>Gazebo/DarkGrey</material>
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <kp>100000000.0</kp>
+    <kd>550000.0</kd>
+  </gazebo>
+
+  <xacro:property name="cam_color_width"  value="640"/>
+  <xacro:property name="cam_color_height" value="480"/>
+  <xacro:property name="cam_depth_width"  value="640"/>
+  <xacro:property name="cam_depth_height" value="480"/>
+  <xacro:property name="cam_fps"          value="15.0"/>
+
+  <gazebo reference="camera_link">
+    <material>Gazebo/DarkGrey</material>
+
+    <sensor name="camera_d435i_color" type="camera">
+      <always_on>true</always_on>
+      <update_rate>${cam_fps}</update_rate>
+      <visualize>false</visualize>
+      <!-- pitch matches camera_color_frame so the rendered image tilts 15 deg down -->
+      <pose>0 0.015 0 0 ${camera_pitch} 0</pose>
+      <camera name="camera_d435i_color">
+        <horizontal_fov>1.211259</horizontal_fov>
+        <image>
+          <width>${cam_color_width}</width>
+          <height>${cam_color_height}</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>100.0</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+      </camera>
+      <plugin name="camera_d435i_color_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <namespace>/camera</namespace>
+        </ros>
+        <camera_name>color</camera_name>
+        <frame_name>camera_color_optical_frame</frame_name>
+      </plugin>
+    </sensor>
+
+    <sensor name="camera_d435i_depth" type="depth">
+      <always_on>true</always_on>
+      <update_rate>${cam_fps}</update_rate>
+      <visualize>false</visualize>
+      <!-- Render depth from the COLOR optical frame: same y-offset (0.015),
+           same FOV (1.211259) and same pitch as the color sensor. This makes
+           the depth image pixel-registered to the color image, mirroring the
+           real D435i `align_depth:=true` output that RTAB-Map's RGB-D pipeline
+           expects. -->
+      <pose>0 0.015 0 0 ${camera_pitch} 0</pose>
+      <camera name="camera_d435i_depth">
+        <horizontal_fov>1.211259</horizontal_fov>
+        <image>
+          <width>${cam_depth_width}</width>
+          <height>${cam_depth_height}</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.105</near>
+          <far>10.0</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+      </camera>
+      <plugin name="camera_d435i_depth_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <namespace>/camera</namespace>
+          <remapping>camera_d435i_depth/depth/image_raw:=depth/image_rect_raw</remapping>
+          <remapping>camera_d435i_depth/depth/camera_info:=depth/camera_info</remapping>
+          <remapping>camera_d435i_depth/points:=depth/color/points</remapping>
+        </ros>
+        <camera_name>camera_d435i_depth</camera_name>
+        <frame_name>camera_color_optical_frame</frame_name>
+        <hack_baseline>0.05</hack_baseline>
+        <min_depth>0.105</min_depth>
+        <max_depth>10.0</max_depth>
+      </plugin>
+    </sensor>
+
+    <sensor name="camera_d435i_imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>200.0</update_rate>
+      <!-- Place + orient the sensor to coincide with camera_imu_optical_frame so the
+           measured axes match the published frame_name. Orientation = Ry(pitch)*R_optical,
+           which for an XYZ optical frame reduces to roll = -(pi/2 + camera_pitch). -->
+      <pose>-0.01174 -0.00552 0.0051 ${-1.5707963267948966 - camera_pitch} 0 -1.5707963267948966</pose>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>0.0003</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>0.0003</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>0.0003</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>0.017</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>0.017</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>0.017</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+      <plugin name="camera_d435i_imu_controller" filename="libgazebo_ros_imu_sensor.so">
+        <ros>
+          <namespace>/camera</namespace>
+          <remapping>~/out:=imu</remapping>
+        </ros>
+        <frame_name>camera_imu_optical_frame</frame_name>
+        <initial_orientation_as_reference>false</initial_orientation_as_reference>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <gazebo>
+    <plugin name="gazebo_ros_p3d" filename="libgazebo_ros_p3d.so">
+      <ros>
+        <namespace>/ground_truth</namespace>
+        <remapping>odom:=odom</remapping>
+      </ros>
+      <body_name>base_footprint</body_name>
+      <frame_name>map</frame_name>
+      <update_rate>50.0</update_rate>
+      <gaussian_noise>0.0</gaussian_noise>
+    </plugin>
+  </gazebo>
+
+</robot>

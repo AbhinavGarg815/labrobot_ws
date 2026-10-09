@@ -1,0 +1,463 @@
+# Nav2 for labrobot: a camera-only differential drive, 0.42 x 0.41 m.
+#
+# DELIBERATELY VERY SLOW: 0.06 m/s and 0.3 rad/s, against a drivetrain
+# capable of 0.314 m/s. Measured motion analysis showed the controller
+# pegged at whatever ceiling it was given, so the ceiling is the speed.
+# 0.06 m/s is below the 0.08 m/s used for all the manual calibration
+# runs, which is the reference the robot was characterised at.
+#
+# Two facts about this robot drive almost every choice below.
+#
+# 1. THERE IS NO LIDAR. Obstacles come from the D435i depth cloud, transformed
+#    into base_footprint and filtered by height. This works only because the
+#    mount pose is calibrated (M2.T1: pitch 10.78 deg, floor flat to 0.06 deg) -
+#    a 1 deg error puts a point at 2 m out by 35 mm, straight into the costmap.
+#
+#    depthimage_to_laserscan was rejected: the camera is pitched 10.78 deg DOWN,
+#    so a "horizontal" scan band is not horizontal in the world. Its optical axis
+#    meets the floor at 0.844/tan(10.78 deg) = 4.43 m, and rows below centre hit
+#    nearer, so the floor would be reported as an obstacle ring.
+#
+# 2. THERE IS A 0.79 m BLIND ZONE ahead of the bumper (measured, M2.T1). The
+#    robot literally cannot see anything closer than that. Every clearing
+#    decision below is conservative because of it - an obstacle the robot has
+#    approached is an obstacle it can no longer see, and clearing it because
+#    "nothing is there now" is how a camera-only robot drives into a bench leg.
+
+amcl:
+  ros__parameters:
+    use_sim_time: false
+# NOTE: AMCL IS NOT USED. RTAB-Map provides map -> odom (see mapping.launch.py
+# localization:=true). AMCL needs a LaserScan this robot does not have. The block
+# is left declared but unlaunched so nobody wires it in by reflex.
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false
+    global_frame: map
+    robot_base_frame: base_footprint
+    odom_topic: /odometry/filtered
+    bt_loop_duration: 10
+    default_server_timeout: 20
+
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    # 5 Hz, NOT the Nav2 default of 20. Measured: the drivetrain answers a
+    # command ~220 ms late, so at 20 Hz the controller issues four more
+    # corrections before the first one has any visible effect - it corrects into
+    # a stale picture and oscillates. That is the jerky motion.
+    #
+    # The lag is structural, from the firmware's own timing: MODBUS ASCII at
+    # 9600 baud is ~37 ms per transaction and the firmware issues ONE per wheel
+    # per cycle, prioritised control > speed > position. Velocity is
+    # differentiated from consecutive POSITION reads, which only happen in spare
+    # slots - so at 20 Hz commands (50 ms) against 37 ms transactions, speed
+    # writes and position reads alternate and the feedback is ~74 ms stale
+    # before transport.
+    #
+    #   20 Hz -> 1.4 transaction slots per cycle (0.4 free for position)
+    #   10 Hz -> 2.7 slots (1.7 free)
+    #    5 Hz -> 5.4 slots (4.4 free)
+    #
+    # So slowing the controller fixes the problem twice: it stops out-running
+    # the plant, AND it frees the slots that make the feedback fresh.
+    #
+    # RAISED BACK TO 10 Hz after the real cause of the "lag" was found.
+    #
+    # 5 Hz was chosen when the drivetrain appeared to answer 220 ms late. It does
+    # not: measured drivetrain-only (no Nav2, omega=0) the lag is +0 ms with an
+    # L/R ratio of 1.000. The trailing was the ACCELERATION LIMITS (Problem 27),
+    # now fixed, so the controller no longer needs to be slowed to match a plant
+    # that was never slow.
+    #
+    # The other original reason for 5 Hz - that fast speed writes starve the
+    # firmware's position reads - is now handled at source by the starvation
+    # guard (kMaxWritesBetweenPos in wheel_drive.h), which forces a position read
+    # after at most two writes regardless of command rate.
+    #
+    # 10 Hz rather than the Nav2 default of 20: at 100 ms there are 2.7 MODBUS
+    # transaction slots per cycle, so writes and reads both fit comfortably.
+    # 20 Hz gives 1.4 and leans on the guard constantly.
+    controller_frequency: 10.0
+    odom_topic: /odometry/filtered
+    # Below this the robot is considered stuck. Max is now 0.06 m/s, so a
+    # genuine crawl is ~0.005 m/s; this must stay well under that.
+    min_x_velocity_threshold: 0.002
+    min_y_velocity_threshold: 0.5      # holonomic only; effectively disabled
+    min_theta_velocity_threshold: 0.005
+    failure_tolerance: 0.3
+    progress_checker_plugin: progress_checker
+    goal_checker_plugins: [general_goal_checker]
+    controller_plugins: [FollowPath]
+
+    progress_checker:
+      plugin: nav2_controller::SimpleProgressChecker
+      required_movement_radius: 0.5
+      # Generous: the castors can stall a direction change for a second or two
+      # (Problem 25), and calling that a failure would trigger recoveries on a
+      # robot that is merely slow.
+      # Raised with the speed cut: 0.5 m at 0.06 m/s takes 8.3 s before
+      # any turning, so 15 s would call a healthy slow robot stuck.
+      movement_time_allowance: 30.0
+
+    general_goal_checker:
+      stateful: true
+      plugin: nav2_controller::SimpleGoalChecker
+      # TIGHTENED once the control loop was actually good. Both of these were
+      # the LIMIT on measured accuracy, not the controller:
+      #   * heading error landed at +/-9.4 deg twice with the old 0.17 rad
+      #     (9.74 deg) tolerance - the controller stopped the instant it was
+      #     inside. With the acceleration fix and 10 Hz it reaches +0.6 deg.
+      #   * position error sat at 93-97 mm against the old 0.10 m for the same
+      #     reason.
+      # A tolerance that the robot hits exactly every time is measuring itself,
+      # not the robot.
+      #
+      # THE YAW TOLERANCE WAS TIGHTENED SUCCESSFULLY. THE XY ONE WAS NOT - it was
+      # tried at 0.05 and 0.08 and BOTH timed out:
+      #     0.10 m -> SUCCEEDED, final error 93-97 mm
+      #     0.08 m -> TIMEOUT,   final error 89 mm
+      #     0.05 m -> TIMEOUT,   final error 79 mm
+      # The robot can reach 79 mm but cannot reliably CLOSE AND HOLD, because
+      # rotating to satisfy the yaw tolerance scrubs the castors and shifts it
+      # ~14 mm laterally - straight back outside a tight xy tolerance. The two
+      # goal constraints then fight and the controller hunts: 38% of samples with
+      # a single wheel twitching, 18-22% spin-only.
+      # 0.10 m is not slack, it is the margin that absorbs the rotation-induced
+      # shift. Do not tighten it again without first fixing the castor scrub.
+      xy_goal_tolerance: 0.10
+      # 0.10 rad = 5.7 deg, still ~9x the measured 0.6 deg error, so there is
+      # margin without the final approach hunting for an angle it cannot hold.
+      yaw_goal_tolerance: 0.10
+
+    FollowPath:
+      # REGULATED PURE PURSUIT, not DWB.
+      #
+      # DWB samples trajectories over `sim_time`, which is a TIME, so its
+      # lookahead is v * sim_time and COLLAPSES as the speed limit falls. At this
+      # robot's 0.06 m/s even a 3 s sim_time gives 18 cm of lookahead - less than
+      # half the robot's own 42 cm length. Measured consequence: with an obstacle
+      # 0.4-0.8 m ahead the planner found a 69-pose route around it, DWB could
+      # not see the obstacle at all, refused to move, and the run ended in
+      # "Failed to make progress" and a failed backup recovery. Reaching a 1 m
+      # horizon at 0.06 m/s would need 16.7 s of simulation per cycle.
+      #
+      # RPP's lookahead is a DISTANCE in metres, so it is speed-independent. It
+      # follows the global path rather than re-deriving avoidance locally, which
+      # suits this robot: the global planner already routes around obstacles and
+      # replans every second.
+      plugin: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
+
+      desired_linear_vel: 0.06
+      # Distance ahead on the path to aim at. 0.5 m is ~1.2 robot lengths - long
+      # enough to commit to a detour, short enough to track a tight corridor.
+      lookahead_dist: 0.5
+      min_lookahead_dist: 0.30
+      max_lookahead_dist: 0.70
+      # Scale the lookahead with speed. At a fixed 0.06 m/s this barely varies,
+      # but it keeps the behaviour sane if the speed cap is ever raised.
+      use_velocity_scaled_lookahead_dist: true
+      lookahead_time: 6.0
+
+      transform_tolerance: 0.3
+      min_approach_linear_velocity: 0.01
+      approach_velocity_scaling_dist: 0.30
+
+      # --- the "regulated" part: slow down for curves and for obstacles -------
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: true
+      # Below this radius of curvature the robot slows. 0.6 m is about the
+      # tightest arc worth taking at this size.
+      regulated_linear_scaling_min_radius: 0.60
+      regulated_linear_scaling_min_speed: 0.02
+      cost_scaling_dist: 0.35
+      cost_scaling_gain: 1.0
+      inflation_cost_scaling_factor: 5.0   # MUST equal the costmaps' cost_scaling_factor
+
+      # --- rotate in place to face the path, then drive ----------------------
+      # A differential drive cannot arc onto a path that starts behind it.
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.6
+      rotate_to_heading_angular_vel: 0.3
+      max_angular_accel: 1.0
+
+      # RPP does not sample trajectories, so it needs its own forward collision
+      # check: simulate the current command ahead and stop if it would hit.
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 2.0
+
+      allow_reversing: false
+      max_robot_pose_search_dist: 2.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      rolling_window: true
+      # 3 x 3 m. The camera sees usefully to 4 m, but a bigger window costs CPU
+      # for space the robot cannot reach before the next update anyway.
+      width: 3
+      height: 3
+      resolution: 0.05
+      footprint: "[[0.21, 0.203], [0.21, -0.203], [-0.21, -0.203], [-0.21, 0.203]]"
+      # Explicit rather than left to the Nav2 default (which is also 0.01): the
+      # padding is added to every side of the footprint, so it comes straight
+      # out of the clearance budget. 1 cm/side against a 10 cm target gap is a
+      # 10% safety margin, which is the right order given the robot's own
+      # position error is 67-99 mm.
+      footprint_padding: 0.01
+      plugins: [voxel_layer, inflation_layer]
+
+      voxel_layer:
+        plugin: nav2_costmap_2d::VoxelLayer
+        enabled: true
+        publish_voxel_map: true
+        origin_z: 0.0
+        # 16 voxels x 0.06 = 0.96 m of vertical extent, which must contain BOTH
+        # the camera (z = 0.844 m; raytracing starts at the sensor origin) and
+        # the tallest obstacle recorded (max_obstacle_height 0.90).
+        #
+        # 16 is a HARD LIMIT: nav2_costmap_2d's voxel grid packs a column into
+        # a 32-bit word at 2 bits per level. An earlier "fix" set z_voxels: 20,
+        # which Nav2 rejects at startup -
+        #     "Error, this implementation can only support up to 16 z values (20)"
+        # - so the grid was never actually enlarged. Height has to come from
+        # z_resolution instead. 0.06 m vertical cells are coarser than the 5 cm
+        # floor cells, which costs nothing: min_obstacle_height (0.10) is the
+        # only vertical threshold that matters and it is well above one cell.
+        z_resolution: 0.06
+        z_voxels: 16
+        max_obstacle_height: 0.90
+        mark_threshold: 0
+        observation_sources: depth_cloud
+        # This is where the mount calibration is cashed in: the cloud arrives in
+        # the camera's optical frame and is transformed through TF, so height
+        # filtering below is only as good as that pose.
+        depth_cloud:
+          topic: /camera/camera/depth/color/points
+          # FAIL CLOSED. Expect a cloud at least every 1.0 s (it arrives at
+          # ~15 Hz). If it stops, this layer goes not-current, the costmap
+          # reports itself stale, and Nav2 refuses to drive. Without this a
+          # missing cloud is SILENT: the costmap shows only the saved map and
+          # every new obstacle is invisible. That happened on 2026-10-07.
+          expected_update_rate: 1.0
+          max_obstacle_height: 0.90
+          # 0.10, NOT 0.06. The threshold must clear the DEPTH NOISE at the
+          # marking range, or distant floor speckle is recorded as obstacle.
+          # Measured depth RMS is 7.4 mm at 1 m, scaling as range^2:
+          #     1.5 m -> 3-sigma  50 mm
+          #     2.0 m -> 3-sigma  89 mm
+          #     3.0 m -> 3-sigma 200 mm
+          # At the old 0.06 m / 3.0 m pairing the noise was over THREE TIMES the
+          # threshold, so floor at 1.7-2.1 m was marked solid right across the
+          # corridor - a wall of phantom obstacle the planner would not cross.
+          # Clearing the costmap did not help: the marks were rebuilt from live
+          # data on every update.
+          min_obstacle_height: 0.10
+          clearing: true
+          marking: true
+          data_type: PointCloud2
+          # Depth noise grows with range squared; past 3 m the points are too
+          # coarse to mark a 5 cm cell honestly.
+          # 2.0, NOT 3.0. Marking is only trustworthy where the depth is; at
+          # 3 m the noise spans 200 mm vertically, which no height threshold can
+          # separate from a real low obstacle. The local costmap is only 3 x 3 m
+          # anyway. Clearing still runs to 3.5 m - clearing far is safe and
+          # useful, it is MARKING far that invents obstacles.
+          obstacle_max_range: 2.0
+          obstacle_min_range: 0.30
+          raytrace_max_range: 3.5
+          # 0.30, NOT 0.80. It was set to 0.80 on the reasoning that the robot
+          # cannot see within its 0.79 m blind zone, so an absence of returns
+          # there is not evidence of free space. THAT REASONING WAS WRONG and it
+          # broke the costmap:
+          #
+          #  * The 0.79 m blind zone applies to the FLOOR - a consequence of the
+          #    camera being pitched 10.78 deg down, so the nearest visible FLOOR
+          #    is ~1.0 m from base_footprint. A TALL object at 0.3 m is plainly
+          #    visible: measured 4568 cloud points from an object 0.3-0.6 m
+          #    ahead, 0.36-0.90 m tall.
+          #
+          #  * Blocking all clearing within 0.80 m does not only protect unseen
+          #    obstacles, it FREEZES STALE MARKS. After driving 1.7 m the local
+          #    costmap read 99-100 in every direction, including sides the camera
+          #    could plainly see were empty, because every cell the robot
+          #    approached became permanently occupied. The planner then had no
+          #    free cell to start from and refused every goal.
+          #
+          # 0.30 matches obstacle_min_range and the camera's usable minimum
+          # depth: clear wherever the sensor can actually see, and nowhere else.
+          raytrace_min_range: 0.30
+
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        # 0.30 m, chosen from the footprint so the robot will thread gaps with
+        # ~10 cm of clearance per side.
+        #
+        # What actually FORBIDS a cell is the INSCRIBED radius derived from the
+        # footprint - min(0.210, 0.203) = 0.203 m. Cells that close to an
+        # obstacle are lethal and no inflation setting changes that, so the hard
+        # limit on gap width is 2 x 0.203 = 0.406 m: the robot's own width.
+        # inflation_radius only adds decaying COST beyond that; it discourages,
+        # it does not forbid.
+        #
+        # The gap centre is cost-FREE when inflation_radius < gap/2. With
+        # footprint_padding 0.01 the padded half-width is 0.213, so:
+        #     10 cm/side -> gap 0.626 m -> needs inflation_radius < 0.313
+        #     15 cm/side -> gap 0.726 m -> needs inflation_radius < 0.363
+        # The previous 0.45 m meant a cost-free centre only in gaps wider than
+        # 0.90 m - i.e. 25 cm of clearance per side, which is why tight passages
+        # were being avoided.
+        #
+        # 0.30 satisfies the 10 cm case by 13 mm, which is not a margin - one
+        # cell of depth noise on the wall closes it and the whole gap goes
+        # non-zero, at which point NavFn prefers any detour that exists. 0.26
+        # leaves a 10.6 cm cost-free ribbon down the middle of a 10 cm/side gap
+        # while keeping a 4.7 cm decay band (0.213..0.26) either side, so the
+        # planner still has a gradient pulling it to the centre of the gap
+        # rather than hugging one wall.
+        #
+        # CAVEAT worth knowing before trusting 10 cm: the robot's own position
+        # error at goals is 67-99 mm and its lateral drift during a run reached
+        # 78 mm. A 100 mm clearance is therefore about the same size as the
+        # robot's positional uncertainty. It will usually fit; it has almost no
+        # margin for a castor scrub at the wrong moment.
+        # 0.45 / 5.0 (was 0.26 / 3.0) - CENTRING, measured 2026-10-07.
+        # With 0.26 a 72.8 cm gap had a ~21 cm strip where every position cost
+        # 0, so NavFn was indifferent inside it and the robot ran 4-7 cm off
+        # centre (min clearance 8.9 cm instead of 16). In a 61 cm gap that same
+        # indifference planned 5 cm from one wall. A radius larger than half
+        # the gap makes the cost slope reach the centre, so the centre is the
+        # unique cheapest line. Cost across a 61 cm gap, centre / 2.5 cm off /
+        # 5 cm off: 159 / 180 / 204 (was 0 / 0 / 222). Still < 253, so the gap
+        # stays passable; the price is that a detour under ~1 m longer through
+        # open space is now preferred to a 10 cm/side squeeze.
+        inflation_radius: 0.45
+        cost_scaling_factor: 5.0
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      resolution: 0.05
+      track_unknown_space: true
+      footprint: "[[0.21, 0.203], [0.21, -0.203], [-0.21, -0.203], [-0.21, 0.203]]"
+      # Explicit rather than left to the Nav2 default (which is also 0.01): the
+      # padding is added to every side of the footprint, so it comes straight
+      # out of the clearance budget. 1 cm/side against a 10 cm target gap is a
+      # 10% safety margin, which is the right order given the robot's own
+      # position error is 67-99 mm.
+      footprint_padding: 0.01
+      plugins: [static_layer, obstacle_layer, inflation_layer]
+
+      # The RTAB-Map occupancy grid. This is the map the robot built.
+      static_layer:
+        plugin: nav2_costmap_2d::StaticLayer
+        map_subscribe_transient_local: true
+        subscribe_to_updates: true
+
+      # Live obstacles on top of the static map, so something moved into the
+      # room since mapping still blocks a global plan.
+      obstacle_layer:
+        plugin: nav2_costmap_2d::ObstacleLayer
+        enabled: true
+        observation_sources: depth_cloud
+        depth_cloud:
+          topic: /camera/camera/depth/color/points
+          expected_update_rate: 1.0   # fail closed - see local costmap
+          data_type: PointCloud2
+          max_obstacle_height: 0.90
+          min_obstacle_height: 0.10   # see local costmap for the noise derivation
+          clearing: true
+          marking: true
+          obstacle_max_range: 2.0     # see local costmap
+          obstacle_min_range: 0.30
+          raytrace_max_range: 3.5
+          raytrace_min_range: 0.30    # see the local costmap for why NOT 0.80
+
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        # Matches the local costmap - see there for the gap-width derivation.
+        # The two must agree, or the global planner routes through a gap the
+        # local controller then refuses to enter.
+        # 0.45 / 5.0 (was 0.26 / 3.0) - CENTRING, measured 2026-10-07.
+        # With 0.26 a 72.8 cm gap had a ~21 cm strip where every position cost
+        # 0, so NavFn was indifferent inside it and the robot ran 4-7 cm off
+        # centre (min clearance 8.9 cm instead of 16). In a 61 cm gap that same
+        # indifference planned 5 cm from one wall. A radius larger than half
+        # the gap makes the cost slope reach the centre, so the centre is the
+        # unique cheapest line. Cost across a 61 cm gap, centre / 2.5 cm off /
+        # 5 cm off: 159 / 180 / 204 (was 0 / 0 / 222). Still < 253, so the gap
+        # stays passable; the price is that a detour under ~1 m longer through
+        # open space is now preferred to a 10 cm/side squeeze.
+        inflation_radius: 0.45
+        cost_scaling_factor: 5.0
+
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+    expected_planner_frequency: 1.0
+    planner_plugins: [GridBased]
+    GridBased:
+      plugin: nav2_navfn_planner/NavfnPlanner
+      tolerance: 0.25
+      # A* rather than full Dijkstra: the maps here are small and A* is faster,
+      # with no practical path-quality difference at this scale.
+      use_astar: true
+      allow_unknown: false
+
+behavior_server:
+  ros__parameters:
+    use_sim_time: false
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: [spin, backup, drive_on_heading, wait]
+    spin:
+      plugin: nav2_behaviors/Spin
+    backup:
+      plugin: nav2_behaviors/BackUp
+    drive_on_heading:
+      plugin: nav2_behaviors/DriveOnHeading
+    wait:
+      plugin: nav2_behaviors/Wait
+    # BackUp is the one recovery this robot should distrust. There is no rear
+    # sensor at all - the camera faces forward - so reversing is strictly blind.
+    # Kept short and slow for that reason.
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.3
+    min_rotational_vel: 0.08
+    rotational_acc_lim: 0.4
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: false
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: OPEN_LOOP
+    # Hard ceiling, independent of the controller. Everything Nav2 emits passes
+    # through here, so a mis-tuned controller or a stray teleop cannot exceed it.
+    max_velocity: [0.06, 0.0, 0.3]
+    min_velocity: [-0.06, 0.0, -0.3]
+    # Deliberately gentle. Abrupt direction changes are what make the swivel
+    # castors slam round and shove the chassis sideways (measured at up to
+    # 9 deg/m on a direction change, Problem 25). Smoothing the command is the
+    # cheapest mitigation available in software.
+    # Must not be TIGHTER than the controller's own limits, or the smoother
+    # becomes the rate limit and the controller's model of the robot is wrong.
+    max_accel: [0.3, 0.0, 1.0]
+    max_decel: [-0.4, 0.0, -1.2]
+    odom_topic: /odometry/filtered
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0

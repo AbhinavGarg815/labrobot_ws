@@ -1,0 +1,205 @@
+#include "wheel_drive.h"
+
+namespace labrobot {
+
+void WheelDrive::begin(HardwareSerial* port, uint8_t slave,
+                       uint16_t lines_per_rot, uint16_t acceleration) {
+  modbus_.begin(port, slave);
+  lines_per_rot_ = lines_per_rot;
+  acceleration_ = acceleration;
+  phase_ = Phase::WRITE_LINES;
+  action_ = Action::NONE;
+  control_dirty_ = true;
+  speed_dirty_ = true;
+}
+
+uint16_t WheelDrive::desiredControlWord() const {
+  if (estopped_) return CTRL_ESTOP;
+  if (disabled_) return CTRL_DISABLE_CW;
+
+  // Brake rather than disable at zero: a disabled drive freewheels, which on a
+  // diff-drive base means the robot can be pushed or roll on a slope.
+  if (target_rpm_ == 0) {
+    return applied_control_ == CTRL_ENABLE_CCW || applied_control_ == CTRL_BRAKE_CCW
+               ? CTRL_BRAKE_CCW
+               : CTRL_BRAKE_CW;
+  }
+  return driveTargetRpm() > 0 ? CTRL_ENABLE_CW : CTRL_ENABLE_CCW;
+}
+
+void WheelDrive::setTargetRpm(int16_t base_motor_rpm) {
+  // Any explicit command clears a latched e-stop or freewheel; the caller is
+  // asserting control again.
+  estopped_ = false;
+  disabled_ = false;
+
+  if (base_motor_rpm != target_rpm_) {
+    target_rpm_ = base_motor_rpm;
+
+    const uint16_t magnitude =
+        static_cast<uint16_t>(base_motor_rpm < 0 ? -base_motor_rpm : base_motor_rpm);
+    if (magnitude != applied_speed_) speed_dirty_ = true;
+    if (desiredControlWord() != applied_control_) control_dirty_ = true;
+  }
+}
+
+void WheelDrive::disable() {
+  disabled_ = true;
+  target_rpm_ = 0;
+  control_dirty_ = true;
+  speed_dirty_ = true;
+}
+
+void WheelDrive::brake() {
+  disabled_ = false;
+  target_rpm_ = 0;
+  if (applied_speed_ != 0) speed_dirty_ = true;
+  if (desiredControlWord() != applied_control_) control_dirty_ = true;
+}
+
+void WheelDrive::emergencyStop() {
+  estopped_ = true;
+  target_rpm_ = 0;
+  control_dirty_ = true;
+  speed_dirty_ = true;
+}
+
+void WheelDrive::requestSetHome() {
+  home_pending_ = true;
+  // Position is about to jump to zero; differentiating across that step would
+  // report a huge phantom velocity.
+  velocity_valid_ = false;
+  velocity_cps_ = 0.0f;
+}
+
+void WheelDrive::startNextTransaction() {
+  switch (phase_) {
+    case Phase::WRITE_LINES:
+      if (modbus_.beginWrite(REG_LINES_PER_ROT, lines_per_rot_)) {
+        action_ = Action::CONTROL;  // reply carries no payload; phase advances
+      }
+      return;
+
+    case Phase::WRITE_ACCEL:
+      if (modbus_.beginWrite(REG_ACCELERATION, acceleration_)) {
+        action_ = Action::CONTROL;
+      }
+      return;
+
+    case Phase::RUNNING:
+      break;
+  }
+
+  // Zeroing the encoder must happen before anything else, or odometry would
+  // briefly report the pre-home value as if it were post-home.
+  if (home_pending_) {
+    if (modbus_.beginWrite(REG_CONTROL, CTRL_SET_HOME)) {
+      action_ = Action::CONTROL;
+      home_pending_ = false;
+      // Re-assert the real control word next, since we just overwrote it.
+      control_dirty_ = true;
+    }
+    return;
+  }
+
+  // Direction/enable before magnitude: applying a new speed while the drive
+  // still holds the old direction bit would briefly drive the wrong way.
+  if (control_dirty_) {
+    const uint16_t word = desiredControlWord();
+    if (modbus_.beginWrite(REG_CONTROL, word)) {
+      applied_control_ = word;
+      control_dirty_ = false;
+      action_ = Action::CONTROL;
+      if (writes_since_pos_ < 255) ++writes_since_pos_;
+    }
+    return;
+  }
+
+  // Starvation guard: if writes have crowded out position reads for too long,
+  // take the slot for a read. The speed write is only deferred by one
+  // transaction (~37 ms) and stays queued, whereas stale odometry silently
+  // corrupts every consumer downstream of it.
+  if (writes_since_pos_ >= kMaxWritesBetweenPos) {
+    if (modbus_.beginRead(REG_POS_FB_LSB, 2)) {
+      action_ = Action::READ_POS;
+      writes_since_pos_ = 0;
+    }
+    return;
+  }
+
+  if (speed_dirty_) {
+    const uint16_t magnitude =
+        static_cast<uint16_t>(target_rpm_ < 0 ? -target_rpm_ : target_rpm_);
+    if (modbus_.beginWrite(REG_SPEED_CMD, magnitude)) {
+      applied_speed_ = magnitude;
+      speed_dirty_ = false;
+      action_ = Action::SPEED;
+      if (writes_since_pos_ < 255) ++writes_since_pos_;
+    }
+    return;
+  }
+
+  // Nothing to write, so spend the slot on position. Every spare slot goes
+  // here: velocity is differentiated from it rather than read separately.
+  if (modbus_.beginRead(REG_POS_FB_LSB, 2)) {
+    action_ = Action::READ_POS;
+    writes_since_pos_ = 0;
+  }
+}
+
+void WheelDrive::poll() {
+  modbus_.poll();
+
+  if (modbus_.complete()) {
+    consecutive_faults_ = 0;
+
+    switch (action_) {
+      case Action::READ_POS: {
+        // Registers arrive LSB (addr 20) then MSB (addr 22). Assemble as
+        // unsigned then reinterpret, so reverse travel sign-extends correctly.
+        const uint32_t raw =
+            (static_cast<uint32_t>(modbus_.responseRegister(1)) << 16) |
+            modbus_.responseRegister(0);
+        const int32_t signed_raw = static_cast<int32_t>(raw);
+        position_counts_ = inverted_ ? -signed_raw : signed_raw;
+
+        const uint32_t now = millis();
+        if (velocity_valid_ && now != last_pos_ms_) {
+          const float dt = (now - last_pos_ms_) * 0.001f;
+          velocity_cps_ =
+              static_cast<float>(position_counts_ - last_pos_counts_) / dt;
+        }
+        last_pos_counts_ = position_counts_;
+        last_pos_ms_ = now;
+        velocity_valid_ = true;
+        break;
+      }
+      default:
+        break;
+    }
+
+    // Advance one-time setup phases once their write is acknowledged.
+    if (phase_ == Phase::WRITE_LINES) {
+      phase_ = Phase::WRITE_ACCEL;
+    } else if (phase_ == Phase::WRITE_ACCEL) {
+      phase_ = Phase::RUNNING;
+    }
+
+    modbus_.acknowledge();
+    action_ = Action::NONE;
+  } else if (modbus_.failed()) {
+    if (consecutive_faults_ < 255) ++consecutive_faults_;
+
+    // A failed write never reached the drive, so re-queue it rather than
+    // assuming the commanded value is in effect.
+    if (action_ == Action::CONTROL) control_dirty_ = true;
+    if (action_ == Action::SPEED) speed_dirty_ = true;
+
+    modbus_.acknowledge();
+    action_ = Action::NONE;
+  }
+
+  if (modbus_.idle() && !suspended_) startNextTransaction();
+}
+
+}  // namespace labrobot
