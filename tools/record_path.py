@@ -21,8 +21,27 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 out, dur = sys.argv[1], float(sys.argv[2])
 rclpy.init()
 n = Node('record_path')
-st = {'plan': None, 'traj': [], 'odom': []}
-n.create_subscription(Path, '/plan', lambda m: st.__setitem__('plan', m),
+st = {'plan': None, 'traj': [], 'odom': [], 'plans': []}
+def on_plan(m):
+    # Keep EVERY replan, not just the last. Nav2 replans at 1 Hz from wherever
+    # the robot is, so the route it was following at the narrowest point can
+    # differ from the one probed at the start - and only the history can tell
+    # "the planner bent the route" from "the controller cut the corner".
+    st['plan'] = m
+    entry = {'t': time.time() - t0,
+             'pts': [(ps.pose.position.x, ps.pose.position.y) for ps in m.poses]}
+    # Same plan in the ODOM frame, using map->odom at receipt, so it can be laid
+    # directly over the odom trajectory and the odom-frame gap edges.
+    try:
+        tf = buf.lookup_transform('odom', m.header.frame_id, rclpy.time.Time())
+        q, t = tf.transform.rotation, tf.transform.translation
+        yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
+        c, s_ = math.cos(yaw), math.sin(yaw)
+        entry['odom_pts'] = [(t.x + c*x - s_*y, t.y + s_*x + c*y) for x, y in entry['pts']]
+    except Exception:  # noqa: BLE001
+        pass
+    st['plans'].append(entry)
+n.create_subscription(Path, '/plan', on_plan,
                       QoSProfile(depth=5, reliability=ReliabilityPolicy.RELIABLE))
 buf = tf2_ros.Buffer()
 tf2_ros.TransformListener(buf, n)
@@ -48,12 +67,12 @@ while time.time() - t0 < dur:
         po = to.transform.translation
         if not st['odom'] or math.hypot(po.x - st['odom'][-1][0],
                                         po.y - st['odom'][-1][1]) > 0.02:
-            st['odom'].append((po.x, po.y, yaw))
+            st['odom'].append((po.x, po.y, yaw, time.time() - t0))
     except Exception:  # noqa: BLE001
         pass
 plan = ([(ps.pose.position.x, ps.pose.position.y) for ps in st['plan'].poses]
         if st['plan'] else [])
-json.dump({'plan': plan, 'traj': st['traj'], 'odom': st['odom']}, open(out, 'w'))
+json.dump({'plan': plan, 'traj': st['traj'], 'odom': st['odom'], 'plans': st['plans']}, open(out, 'w'))
 print(f'  plan {len(plan)} poses, trajectory {len(st["traj"])} pts (map), '
-      f'{len(st["odom"])} pts (odom) -> {out}')
+      f'{len(st["odom"])} pts (odom), {len(st["plans"])} plans -> {out}')
 rclpy.shutdown()

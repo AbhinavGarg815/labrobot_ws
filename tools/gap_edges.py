@@ -31,6 +31,9 @@ ap.add_argument('--far', type=float, default=2.8)
 ap.add_argument('--split', type=float, default=None,
                 help='lateral position (m) separating left from right obstacle; '
                      'default: the widest empty column band near the centreline')
+ap.add_argument('--save', default=None,
+                help='write the edges to this JSON file, in the ODOM frame, so a '
+                     'later run can be scored against them (tools/gap_run_report.py)')
 a = ap.parse_args()
 rclpy.init(); n = Node('gap_edges'); b = tf2_ros.Buffer(); tf2_ros.TransformListener(b, n)
 frames, st = [], {}
@@ -68,6 +71,16 @@ for lo in np.arange(a.near, a.far, 0.1):
     else:
         print(f'    {lo:.1f}-{lo+0.1:.1f} m   {"open" if len(L) <= 50 else "%+.3f" % np.percentile(L, 2):>6}       '
               f'{"open" if len(Rr) <= 50 else "%+.3f" % np.percentile(Rr, 98):>6}')
+if rows and a.save:
+    import json, math
+    to = b.lookup_transform('odom', 'base_footprint', rclpy.time.Time())
+    q = to.transform.rotation; yaw = math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z))
+    c, s = math.cos(yaw), math.sin(yaw); ox, oy = to.transform.translation.x, to.transform.translation.y
+    def od(x, y): return (ox + c*x - s*y, oy + s*x + c*y)
+    json.dump({'robot_odom': [ox, oy, yaw],
+               'slices': [{'x': lo + 0.05, 'left': od(lo + 0.05, le), 'right': od(lo + 0.05, re),
+                           'width': w} for lo, le, re, w in rows]}, open(a.save, 'w'))
+    print(f'  edges saved (odom frame) -> {a.save}')
 if rows:
     lo, le, re, w = min(rows, key=lambda r: r[3])
     print(f'\n  NARROWEST: {w*100:.1f} cm at {lo:.1f}-{lo+0.1:.1f} m, centre y={(le+re)/2:+.3f} m'

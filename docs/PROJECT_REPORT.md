@@ -943,6 +943,26 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### M4.T5e — 61 cm gap with Smac 2D: route centred, robot still 3-7 cm right (2026-10-09)
+
+Camera yaw re-measured: **-0.77 deg** (first run +0.57 deg). Opposite signs ->
+no measurable mounting error (noise ~+-0.6 deg); URDF left unchanged.
+
+Smac 2D's route, probed before the run, was **0.7-2.2 cm** from the measured
+gap centre (NavFn: 4-7 cm right). Run: SUCCEEDED, 2.01 m, 38 s (vs 76.6 s),
+one brief "collision ahead" stop. But the ROBOT ran 3-5 cm right of the gap
+centre, 7 cm right of the probed route at the narrowest slice, heading -12 deg
+on a -5 deg route; minimum corner clearance **1.1 cm** (NavFn run: 0.6 cm).
+
+The free space opens to the right past the exit (right edge -0.47 -> -0.76 m).
+Either the 1 Hz replans bent the route right towards it, or RPP (lookahead
+clamped at its 0.30 m minimum by cost-regulated slowing) cut the corner. The
+recorder only kept the last plan, so it could not tell. Instrumented:
+`record_path.py` now keeps every replan (map + odom frame, timestamped),
+`gap_edges.py --save` stores edges in odom, and `tools/gap_run_report.py`
+splits each slice into route-off-centre (planner) and robot-off-route
+(controller). Report tool verified on synthetic data.
+
 ### Problem 36 — the global planner had a built-in half-cell bias (2026-10-09)
 
 All narrow-gap runs ran 4-7 cm right of centre. The camera yaw was measured
