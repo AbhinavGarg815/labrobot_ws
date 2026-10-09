@@ -408,12 +408,24 @@ planner_server:
     expected_planner_frequency: 1.0
     planner_plugins: [GridBased]
     GridBased:
-      plugin: nav2_navfn_planner/NavfnPlanner
+      # Smac 2D, NOT NavFn. Measured with tools/planner_bias (planner alone on
+      # synthetic maps, each gap crossed both ways, walls along both axes):
+      # NavFn's route is always shifted half a cell (-2.5 cm) towards the map's
+      # -x/-y corner, even through a gap whose exact centre is a cell centre.
+      # On hardware every narrow-gap run headed ~+x, so that shift was always
+      # to the robot's right - part of the 4-7 cm right-of-centre runs.
+      # Smac 2D and Theta* route through the exact centre (0.0 cm) whenever a
+      # cell sits on it; the only residual is grid rounding (0-2.5 cm) when
+      # the centre falls between two cells.
+      plugin: nav2_smac_planner/SmacPlanner2D
       tolerance: 0.25
-      # A* rather than full Dijkstra: the maps here are small and A* is faster,
-      # with no practical path-quality difference at this scale.
-      use_astar: true
+      downsample_costmap: false        # keep full 5 cm resolution for gaps
       allow_unknown: false
+      max_planning_time: 2.0           # s; maps here plan in well under that
+      # >1 weights cost over distance, so of two equally short routes the one
+      # further from obstacles wins - the centre of a gap.
+      cost_travel_multiplier: 2.0
+      use_final_approach_orientation: false
 
 behavior_server:
   ros__parameters:

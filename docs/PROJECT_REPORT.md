@@ -943,6 +943,41 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### Problem 36 — the global planner had a built-in half-cell bias (2026-10-09)
+
+All narrow-gap runs ran 4-7 cm right of centre. The camera yaw was measured
+first (`tools/camera_yaw_check.py`: drive straight at a gap, compare its edges
+from two distances in odom) at +0.57 deg (spread 1.07 deg over 8 slices) -
+about 2 cm at 2 m, not enough alone, and to be re-measured before applying.
+
+`tools/planner_bias/` runs the real planner_server alone on synthetic maps
+(robot footprint, inflation 0.45/5.0), one opening per map, crossed both ways,
+walls along both axes:
+
+| planner | centre on a cell edge | centre mid-cell |
+|---|---|---|
+| NavFn | -2.4 cm | **-2.5 cm** |
+| Smac 2D | -2.5 cm | **0.0 cm** |
+| Theta* | -2.5 cm | **0.0 cm** |
+
+NavFn's error has the same sign in MAP coordinates whichever way the robot
+travels: a fixed half-cell shift towards -x/-y, even when a cell sits exactly
+on the gap centre. Every hardware run headed ~+x, so it was always to the
+robot's right. Smac 2D / Theta* are exact when they can be; the rest is 5 cm
+grid rounding (0-2.5 cm). **Switched to `nav2_smac_planner/SmacPlanner2D`**
+with `cost_travel_multiplier: 2.0`. Not yet verified on hardware.
+
+Also: `labrobot_bringup/package.xml` now declares every package the launch
+files start (Nav2, RTAB-Map, RealSense, foxglove, compressed transport); before,
+a fresh `rosdep install` would have missed all of them.
+
+### Version control
+
+The workspace is a git repository (first commit 2026-10-09). `.gitignore`
+excludes build/install/log, map databases and point-cloud exports (GB-scale;
+backed up under `docs/maps/backup/` on the Jetson) and `docs/logs/`. Verified
+changes are committed together with the report entry that documents them.
+
 ### M4.T5d — 61 cm gap (9.6 cm/side) re-run: through, but ~1 cm at the corners (2026-10-09)
 
 Pre-goal localisation check passed (it had first refused - correctly failing
