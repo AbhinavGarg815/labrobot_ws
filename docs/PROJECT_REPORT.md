@@ -943,6 +943,44 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### Problem 37 — relocalising after a hand move (2026-10-12)
+
+**What goes wrong.** After the robot is carried (or the Jetson restarts with
+the robot moved), localisation mode:
+1. starts from the pose saved at the end of the last session ("Update map
+   correction based on last localization saved in database") - a guess, here
+   ~0.5 m out, which RTAB-Map reports as localised;
+2. then REJECTS the true visual matches as a "teleport": its odometry cache
+   (`RGBD/MaxOdomCacheSize`) and proximity links built at the stale pose
+   contradict them (error ratio 5.28 / 3.76 vs `RGBD/OptimizeMaxError` 3.0).
+And from a cluttered spot most candidate matches are on things that MOVE.
+Stored images showed the most frequent candidate shared a castor pole stand,
+chair and desk clutter with the live view; geometry correctly gave 0/20
+inliers (35 rejections in 75 s). The far wall/shelf structure was barely in
+view.
+
+**Pre-goal check, reworked** (`localisation_check.py`). Moved furniture that
+is IN the map fooled the all-points version into a false WRONG (near points
+46% -> 93% at a pose 0.54 m away, far structure 73% vs 76%). The verdict now
+comes from a pose search over the FARTHER half of the points only - moved
+objects disagree up close, a wrong pose disagrees everywhere. Self-test 4/4
+(1.8 m, 0.6/0.4 m, 12 deg, 0.3 m). A first attempt (far points scored only at
+the all-points winner) went 2/4 and was discarded.
+
+**`relocalise.py`** (new): check -> if wrong, publish the check's far-structure
+estimate on `/initialpose` (replaces RTAB-Map's stale pose and clears its
+odometry cache) -> optional `--spin` in 45 deg steps -> relocalised only when
+RTAB-Map has accepted a GLOBAL loop closure AND the check agrees -> then clear
+both costmaps (a hand move leaves stale marks in odom coordinates). Counting
+proximity detections as confirmation was a bug: they are searched around the
+current guess, so they cannot confirm it.
+
+**Status:** the hint is taken (check goes WRONG -> OK after it), but from the
+current cluttered spot RTAB-Map has not produced an accepted global closure in
+two full turns, so `relocalise.py` correctly reports NOT relocalised.
+Relocalise facing stable structure (walls, shelving), away from movable
+furniture and people.
+
 ### M4.T5e — 61 cm gap with Smac 2D: route centred, robot still 3-7 cm right (2026-10-09)
 
 Camera yaw re-measured: **-0.77 deg** (first run +0.57 deg). Opposite signs ->

@@ -27,7 +27,9 @@ search nearby poses (+-2 m, +-15 deg) for one that explains the view much
 better.
 
   OK       no nearby pose is clearly better -> unmatched points are new objects
-  WRONG    a pose > 0.25 m or > 8 deg away scores >= 0.15 better -> refuse
+  WRONG    searching on the FARTHER half of the points only, a pose > 0.25 m
+           or > 8 deg away scores >= 0.15 better -> refuse. (Near points are
+           left out of the verdict: moved furniture disagrees up close.)
   UNSURE   too few obstacle returns, or too little matches anywhere -> refuse
 """
 import argparse
@@ -176,33 +178,61 @@ def evaluate(data, offset=(0.0, 0.0, 0.0)):
             good &= ~(look(OCC, ij, di, dj) & kp)
         return good.mean()
 
-    here = score(prepare(0.0), 0, 0)
-    best = (here, 0.0, 0.0, 0.0)
-    step = 2                       # cells (10 cm) for the coarse search
-    span = int(round(2.0 / res))   # +-2 m
-    for dyaw in np.radians(np.arange(-15, 15.1, 3)):
-        prep = prepare(dyaw)
-        for di in range(-span, span + 1, step):
-            for dj in range(-span, span + 1, step):
-                sc = score(prep, di, dj)
-                if sc > best[0]:
-                    best = (sc, di*res, dj*res, dyaw)
+    def search(mask):
+        """Best pose within +-2 m / +-15 deg using only the points in mask."""
+        def sc(prep, di, dj):
+            tgt, rays, origin = prep
+            if look(OCC, origin, di, dj)[0]:
+                return 0.0
+            sub = (tgt[0][mask], tgt[1][mask])
+            good = look(NEAR, sub, di, dj)
+            for ij, kp in rays:
+                good &= ~(look(OCC, (ij[0][mask], ij[1][mask]), di, dj) & kp[mask])
+            return good.mean()
+        here_ = sc(prepare(0.0), 0, 0)
+        best_ = (here_, 0.0, 0.0, 0.0)
+        step, span = 2, int(round(2.0 / res))
+        for dyaw in np.radians(np.arange(-15, 15.1, 3)):
+            prep = prepare(dyaw)
+            for di in range(-span, span + 1, step):
+                for dj in range(-span, span + 1, step):
+                    v = sc(prep, di, dj)
+                    if v > best_[0]:
+                        best_ = (v, di*res, dj*res, dyaw)
+        return here_, best_
+
+    # The verdict comes from the FARTHER half of the points only. A wrong pose
+    # misaligns everything; furniture that was mapped in one place and has
+    # since moved disagrees only where it stands, which is usually close. Seen
+    # 2026-10-12: test boxes mapped during the extension session and moved
+    # since pulled an all-points search 0.54 m away (near points 46% -> 93%)
+    # while far structure scored the same at both poses - and RTAB-Map's own
+    # localisation was correct. A first fix compared the far points only AT
+    # the all-points winner; that pose is chosen by the near objects, so it
+    # missed real 0.3 m errors. Searching on the far points directly does not.
+    far = rng >= np.median(rng)
+    here_all = score(prepare(0.0), 0, 0)
+    here, best = search(far)
     dist = math.hypot(best[1], best[2])
     dyaw_deg = math.degrees(best[3])
     edge = dist > 1.9 or abs(dyaw_deg) > 14.0
     if len(P) < MIN_POINTS:
         verdict, why = 'UNSURE', f'only {len(P)} obstacle returns in view - face some structure'
     elif best[0] < MIN_BEST_SCORE:
-        verdict, why = 'UNSURE', f'nothing matches the map anywhere nearby (best {best[0]:.0%})'
+        verdict, why = 'UNSURE', f'nothing far matches the map anywhere nearby (best {best[0]:.0%})'
     elif best[0] - here >= WRONG_GAIN and (dist > WRONG_DIST_M or abs(dyaw_deg) > WRONG_YAW_DEG):
-        verdict, why = 'WRONG', (f'a pose {dist:.2f} m / {dyaw_deg:+.0f} deg away matches '
+        verdict, why = 'WRONG', (f'far structure fits a pose {dist:.2f} m / {dyaw_deg:+.0f} deg away: '
                                  f'{best[0]:.0%} vs {here:.0%} here'
                                  + (' (at the search edge - may be further)' if edge else ''))
     else:
-        verdict, why = 'OK', (f'{here:.0%} of live obstacles consistent with the map; no nearby '
-                              f'pose clearly better (best {best[0]:.0%} at {dist:.2f} m / {dyaw_deg:+.0f} deg)')
+        verdict, why = 'OK', (f'far structure {here:.0%} consistent here, no nearby pose clearly '
+                              f'better (best {best[0]:.0%} at {dist:.2f} m / {dyaw_deg:+.0f} deg); '
+                              f'all points {here_all:.0%}')
     return {'verdict': verdict, 'why': why, 'here': here, 'best': best[0],
-            'shift': (best[1], best[2], dyaw_deg), 'n': len(P)}
+            'shift': (best[1], best[2], dyaw_deg), 'n': len(P), 'at_edge': edge,
+            # the far-structure best pose, in the map frame - usable as an
+            # initial-pose hint for RTAB-Map after a hand move
+            'best_pose': (x0 + best[1], y0 + best[2], yaw0 + best[3])}
 
 
 def check(node, buf):

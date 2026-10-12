@@ -16,6 +16,7 @@ install(
     scripts/check_map.py
     scripts/check_costmap.py
     scripts/localisation_check.py
+    scripts/relocalise.py
     scripts/nav_goal.py
     scripts/analyse_motion.py
     scripts/verify_wheels.py
