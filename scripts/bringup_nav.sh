@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# Bring up the robot in localisation mode, then Nav2, in the background.
+# Bring up the robot with SLAM running, then Nav2, in the background.
 #
-#     scripts/bringup_nav.sh            # logs to docs/logs/nav_<time>*.log
+#     scripts/bringup_nav.sh                  # lifelong SLAM: map updates as it drives
+#     scripts/bringup_nav.sh --localization   # map frozen, localise only
+#
+# Lifelong SLAM is the default (user decision 2026-10-13: "update map in every
+# navigation"). The lab is rearranged often; a frozen map keeps moved furniture
+# as phantom obstacles and stops matching the room, which is what made
+# relocalisation fail after objects moved. Mapping while navigating keeps both
+# current. Costs: the database grows ~10 MB per metre driven, and a false loop
+# closure could bend the map - back up the database before long sessions.
 #
 # Waits for each stage on its log rather than on a fixed sleep, and writes a
 # one-line status file (docs/logs/bringup_status) so progress can be checked in
@@ -14,12 +22,14 @@ STAMP=$(date +%H%M)
 ROBOT_LOG=docs/logs/nav_${STAMP}.log
 NAV_LOG=docs/logs/nav_${STAMP}_nav2.log
 STATUS=docs/logs/bringup_status
+MODE_ARG="slam:=true"
+if [ "${1:-}" = "--localization" ]; then MODE_ARG="localization:=true"; shift; fi
 status() { echo "$(date +%T) $*" > "$STATUS"; echo "$(date +%T) $*"; }
 
 bash scripts/stop_robot.sh >/dev/null 2>&1
 ros2 daemon stop >/dev/null 2>&1; ros2 daemon start >/dev/null 2>&1
-status "starting robot (localization) -> $ROBOT_LOG"
-setsid ros2 launch labrobot_bringup robot.launch.py localization:=true "$@" \
+status "starting robot ($MODE_ARG) -> $ROBOT_LOG"
+setsid ros2 launch labrobot_bringup robot.launch.py "$MODE_ARG" "$@" \
     > "$ROBOT_LOG" 2>&1 < /dev/null &
 for _ in $(seq 1 60); do
     grep -qE "rtabmap \([0-9]+\):" "$ROBOT_LOG" && break

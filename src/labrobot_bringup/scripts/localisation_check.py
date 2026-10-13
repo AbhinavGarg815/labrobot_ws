@@ -16,21 +16,9 @@ have stopped. Nothing checked the pose before moving.
 
 How it decides
 --------------
-Live depth returns 0.15-0.90 m above the floor (the costmap's band, within
-2.5 m where depth noise is small) are projected into the map and scored as the
-fraction landing within one cell of a mapped obstacle.
-
-A low score alone does NOT mean a wrong pose: objects placed after mapping (two
-boxes forming a test gap) land in mapped free space even when the pose is
-perfect - a correct pose scored ~50% that way. So the decision is relative:
-search nearby poses (+-2 m, +-15 deg) for one that explains the view much
-better.
-
-  OK       no nearby pose is clearly better -> unmatched points are new objects
-  WRONG    searching on the FARTHER half of the points only, a pose > 0.25 m
-           or > 8 deg away scores >= 0.15 better -> refuse. (Near points are
-           left out of the verdict: moved furniture disagrees up close.)
-  UNSURE   too few obstacle returns, or too little matches anywhere -> refuse
+See evaluate(): far live obstacle points landing in mapped free space, and
+the share of points near mapped obstacles, at the CURRENT pose. A guard against
+gross errors (hand moves, stale startup pose), not a precise pose estimate.
 """
 import argparse
 import math
@@ -48,13 +36,10 @@ from sensor_msgs.msg import CameraInfo, Image
 DEPTH_TOPIC = '/camera/camera/aligned_depth_to_color/image_raw'
 INFO_TOPIC = '/camera/camera/color/camera_info'
 
-# Decision thresholds. A pose this far away scoring this much better is a wrong
-# pose, not noise.
-WRONG_DIST_M = 0.25
-WRONG_YAW_DEG = 8.0
-WRONG_GAIN = 0.15
+# Decision thresholds (see evaluate() for the measurements behind them).
+MAX_FREE_FAR = 0.25    # correct poses measured 6.7% and 14%; wrong ones 27.8-40%
+MIN_NEAR_OBS = 0.60
 MIN_POINTS = 300
-MIN_BEST_SCORE = 0.35
 
 
 def _rot(q):
@@ -119,120 +104,60 @@ def gather(node, buf, seconds=6.0):
 
 
 def evaluate(data, offset=(0.0, 0.0, 0.0)):
-    """Score the pose, then search nearby poses. offset perturbs the pose
-    (used by --selftest to simulate a wrong one).
+    """Verdict from two numbers, computed at the current pose only.
 
-    A point counts only if it is CONSISTENT with the map, not merely near an
-    obstacle: it must land within one cell of a mapped obstacle AND the ray
-    from the robot to it must cross no mapped obstacle on the way. The first
-    version scored "near an obstacle" alone, and the search then always found
-    a pose scoring 100% - shift the cloud into a dense block of furniture and
-    every point is near something. Real surfaces have free space in front of
-    them; the ray test is what rules those impossible poses out.
+      free_far   share of the FARTHER half of the live obstacle points that land
+                 in mapped free space (not within 10 cm of a mapped obstacle).
+                 A wrong pose pushes walls into free space; moved or new objects
+                 mostly sit up close, so the near half is left out.
+      near_obs   share of ALL points within 10 cm of a mapped obstacle. Catches
+                 poses so far off that the points fall beyond the walls, into
+                 unknown space, where free_far cannot see them.
+
+    WRONG if free_far > 25% or near_obs < 60%.
+
+    This REPLACED a +-2 m / +-15 deg pose search (2026-10-13). The search kept
+    finding "better" poses for a pose the user could see was right in Foxglove
+    (83.8% of points on mapped obstacles, 0.0% in free space), because a single
+    view barely constrains error along the line of sight. Its self-test only
+    proved that wrong poses fail - never that the right one passes. Measured on
+    that confirmed-correct view: current 6.7% / 96.2% (OK); 15 cm sideways
+    27.8%; 5 deg 34.2%; 12 deg 39.4%; 0.6 m back + 0.4 m left 39.4%; 1.8 m
+    forward 0.0% / 43.7%; all caught. 0.3 m straight forward is NOT caught
+    (0.0% / 98.4%) - one view cannot see it. RTAB-Map's own localisation is the
+    primary source of the pose; this is a guard against gross errors.
     """
     P, M = data['pts'], data['map']
-    if len(P) > 2000:
-        P = P[np.random.default_rng(1).choice(len(P), 2000, replace=False)]
     x0, y0, yaw0 = data['x'] + offset[0], data['y'] + offset[1], data['yaw'] + offset[2]
     res = M.info.resolution
     ox, oy = M.info.origin.position.x, M.info.origin.position.y
     W, H = M.info.width, M.info.height
-    occ = np.asarray(M.data, np.int16).reshape(H, W) >= 50
-    pad = np.pad(occ, 1)
-    near = (pad[1:-1, 1:-1] | pad[:-2, 1:-1] | pad[2:, 1:-1] | pad[1:-1, :-2] | pad[1:-1, 2:])
-    m = 45   # cells of margin so translated lookups stay in bounds (outside = free)
-    NEAR, OCC = np.pad(near, m), np.pad(occ, m)
-    # Ray samples, as fractions of each point's range. They stop short of the
-    # point itself (and the robot's own body) so the target surface and the
-    # mapped obstacle it sits on cannot veto their own ray.
-    rng = np.hypot(P[:, 0], P[:, 1])
-    fracs = [f for f in (0.2, 0.4, 0.6, 0.8)]
-    def keep(f):   # only sample where it is > 1.5 cells short of the point
-        return (rng * (1 - f)) > 1.5 * res
-
-    def indices(pts, dyaw):
-        th = yaw0 + dyaw
-        c, s = math.cos(th), math.sin(th)
-        wx = x0 + c*pts[:, 0] - s*pts[:, 1]
-        wy = y0 + s*pts[:, 0] + c*pts[:, 1]
-        return (np.floor((wx-ox)/res).astype(int) + m, np.floor((wy-oy)/res).astype(int) + m)
-
-    def look(grid, ij, di, dj):
-        i, j = ij[0] + di, ij[1] + dj
-        out = np.zeros(len(i), bool)
-        k = (i >= 0) & (i < grid.shape[1]) & (j >= 0) & (j < grid.shape[0])
-        out[k] = grid[j[k], i[k]]
-        return out
-
-    def prepare(dyaw):
-        return (indices(P, dyaw),
-                [(indices(P * f, dyaw), keep(f)) for f in fracs],
-                indices(np.zeros((1, 2)), dyaw))
-
-    def score(prep, di, dj):
-        tgt, rays, origin = prep
-        if look(OCC, origin, di, dj)[0]:
-            return 0.0                          # robot inside a mapped obstacle
-        good = look(NEAR, tgt, di, dj)
-        for ij, kp in rays:
-            good &= ~(look(OCC, ij, di, dj) & kp)
-        return good.mean()
-
-    def search(mask):
-        """Best pose within +-2 m / +-15 deg using only the points in mask."""
-        def sc(prep, di, dj):
-            tgt, rays, origin = prep
-            if look(OCC, origin, di, dj)[0]:
-                return 0.0
-            sub = (tgt[0][mask], tgt[1][mask])
-            good = look(NEAR, sub, di, dj)
-            for ij, kp in rays:
-                good &= ~(look(OCC, (ij[0][mask], ij[1][mask]), di, dj) & kp[mask])
-            return good.mean()
-        here_ = sc(prepare(0.0), 0, 0)
-        best_ = (here_, 0.0, 0.0, 0.0)
-        step, span = 2, int(round(2.0 / res))
-        for dyaw in np.radians(np.arange(-15, 15.1, 3)):
-            prep = prepare(dyaw)
-            for di in range(-span, span + 1, step):
-                for dj in range(-span, span + 1, step):
-                    v = sc(prep, di, dj)
-                    if v > best_[0]:
-                        best_ = (v, di*res, dj*res, dyaw)
-        return here_, best_
-
-    # The verdict comes from the FARTHER half of the points only. A wrong pose
-    # misaligns everything; furniture that was mapped in one place and has
-    # since moved disagrees only where it stands, which is usually close. Seen
-    # 2026-10-12: test boxes mapped during the extension session and moved
-    # since pulled an all-points search 0.54 m away (near points 46% -> 93%)
-    # while far structure scored the same at both poses - and RTAB-Map's own
-    # localisation was correct. A first fix compared the far points only AT
-    # the all-points winner; that pose is chosen by the near objects, so it
-    # missed real 0.3 m errors. Searching on the far points directly does not.
-    far = rng >= np.median(rng)
-    here_all = score(prepare(0.0), 0, 0)
-    here, best = search(far)
-    dist = math.hypot(best[1], best[2])
-    dyaw_deg = math.degrees(best[3])
-    edge = dist > 1.9 or abs(dyaw_deg) > 14.0
+    G = np.asarray(M.data, np.int16).reshape(H, W)
+    near = G >= 50
+    for _ in range(2):                       # dilate 2 cells = 10 cm
+        q = np.pad(near, 1)
+        near = q[1:-1, 1:-1] | q[:-2, 1:-1] | q[2:, 1:-1] | q[1:-1, :-2] | q[1:-1, 2:]
+    c, s = math.cos(yaw0), math.sin(yaw0)
+    wx = x0 + c*P[:, 0] - s*P[:, 1]
+    wy = y0 + s*P[:, 0] + c*P[:, 1]
+    i = np.floor((wx - ox) / res).astype(int); j = np.floor((wy - oy) / res).astype(int)
+    k = (i >= 0) & (i < W) & (j >= 0) & (j < H)
+    val = np.full(len(P), -1); val[k] = G[j[k], i[k]]
+    nr = np.zeros(len(P), bool); nr[k] = near[j[k], i[k]]
+    rng = np.hypot(P[:, 0], P[:, 1]); far = rng >= np.median(rng)
+    free_far = float(((val == 0) & ~nr & far).sum() / max(1, far.sum()))
+    near_obs = float(nr.mean()) if len(P) else 0.0
     if len(P) < MIN_POINTS:
         verdict, why = 'UNSURE', f'only {len(P)} obstacle returns in view - face some structure'
-    elif best[0] < MIN_BEST_SCORE:
-        verdict, why = 'UNSURE', f'nothing far matches the map anywhere nearby (best {best[0]:.0%})'
-    elif best[0] - here >= WRONG_GAIN and (dist > WRONG_DIST_M or abs(dyaw_deg) > WRONG_YAW_DEG):
-        verdict, why = 'WRONG', (f'far structure fits a pose {dist:.2f} m / {dyaw_deg:+.0f} deg away: '
-                                 f'{best[0]:.0%} vs {here:.0%} here'
-                                 + (' (at the search edge - may be further)' if edge else ''))
+    elif free_far > MAX_FREE_FAR or near_obs < MIN_NEAR_OBS:
+        verdict, why = 'WRONG', (f'{free_far:.0%} of far points in mapped free space (max '
+                                 f'{MAX_FREE_FAR:.0%}), {near_obs:.0%} near mapped obstacles '
+                                 f'(min {MIN_NEAR_OBS:.0%})')
     else:
-        verdict, why = 'OK', (f'far structure {here:.0%} consistent here, no nearby pose clearly '
-                              f'better (best {best[0]:.0%} at {dist:.2f} m / {dyaw_deg:+.0f} deg); '
-                              f'all points {here_all:.0%}')
-    return {'verdict': verdict, 'why': why, 'here': here, 'best': best[0],
-            'shift': (best[1], best[2], dyaw_deg), 'n': len(P), 'at_edge': edge,
-            # the far-structure best pose, in the map frame - usable as an
-            # initial-pose hint for RTAB-Map after a hand move
-            'best_pose': (x0 + best[1], y0 + best[2], yaw0 + best[3])}
+        verdict, why = 'OK', (f'{free_far:.0%} of far points in mapped free space, '
+                              f'{near_obs:.0%} near mapped obstacles')
+    return {'verdict': verdict, 'why': why, 'free_far': free_far, 'near_obs': near_obs,
+            'n': len(P)}
 
 
 def check(node, buf):
@@ -260,19 +185,21 @@ def main():
     print(f'  {r["verdict"]}: {r["why"]}  ({r["n"]} points)')
     rc = 0 if r['verdict'] == 'OK' else 1
     if args.selftest:
-        print('\n  self-test - the same view scored from deliberately wrong poses:')
+        print('\n  self-test - this view from the current pose (assumed correct: run it only when\n'
+              '  the pose has been confirmed, e.g. against Foxglove) and from deliberately wrong poses:')
         caught = 0
-        cases = [(1.8, 0.0, 0.0), (-0.6, 0.4, 0.0), (0.0, 0.0, math.radians(12)), (0.3, 0.0, 0.0)]
+        cases = [(0.0, 0.0, 0.0), (0.0, -0.15, 0.0), (0.0, 0.15, 0.0), (0.0, 0.0, math.radians(5)),
+                 (0.0, 0.0, math.radians(12)), (-0.6, 0.4, 0.0), (1.8, 0.0, 0.0)]
         for dx, dy, dth in cases:
             c, s = math.cos(data['yaw']), math.sin(data['yaw'])
             off = (c*dx - s*dy, s*dx + c*dy, dth)     # offset given in the robot frame
             rr = evaluate(data, off)
-            expect_wrong = math.hypot(dx, dy) > WRONG_DIST_M or abs(math.degrees(dth)) > WRONG_YAW_DEG
-            good = (rr['verdict'] != 'OK') == expect_wrong
+            expect_wrong = (dx, dy, dth) != (0.0, 0.0, 0.0)
+            good = (rr['verdict'] == 'WRONG') == expect_wrong
             caught += good
-            print(f'    pose off by fwd {dx:+.1f} m, left {dy:+.1f} m, yaw {math.degrees(dth):+.0f} deg '
-                  f'-> {rr["verdict"]:6s} ({rr["here"]:.0%} here, best {rr["best"]:.0%})  '
-                  f'{"correct" if good else "MISSED"}')
+            print(f'    pose off by fwd {dx:+.2f} m, left {dy:+.2f} m, yaw {math.degrees(dth):+3.0f} deg '
+                  f'-> {rr["verdict"]:6s} (free_far {rr["free_far"]:.0%}, near {rr["near_obs"]:.0%})  '
+                  f'{"correct" if good else "MISSED" if expect_wrong else "FALSE ALARM"}')
         print(f'  self-test: {caught}/{len(cases)} classified correctly')
         rc = rc or (0 if caught == len(cases) else 3)
     node.destroy_node(); rclpy.shutdown()

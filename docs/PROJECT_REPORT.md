@@ -943,6 +943,44 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### Problem 39 — the pose-search check gave false WRONGs; replaced (2026-10-13)
+
+The user could see in Foxglove that the pose was right; the search-based check
+kept calling it 0.4-1.8 m wrong. Independent alignment at that pose: 83.8% of
+9,817 live obstacle points on mapped obstacles, 100% within 15 cm, 0.0% in
+mapped free space. The search found "better" poses because one view barely
+constrains error along some directions; its self-test only ever proved that
+wrong poses fail, never that the right one passes.
+
+Replacement (`localisation_check.py`), current pose only, ~5 s instead of ~30 s:
+WRONG if > 25% of the FARTHER half of the points land in mapped free space, or
+< 60% of all points are within 10 cm of a mapped obstacle. Self-test now
+includes the correct pose. Measured on the confirmed-correct view:
+
+| offset | free_far | near_obs | verdict |
+|---|---|---|---|
+| none (correct) | 6.7 / 14 / 20% over 3 frames | 88-96% | OK |
+| 15 cm left | 37% | 59% | WRONG |
+| 15 cm right | 2% | 99% | **missed** |
+| 0.15-0.3 m forward | 0-5% | 98% | **missed** |
+| 5 / 12 deg | 39 / 33% | 61 / 54% | WRONG |
+| 0.6 m back + 0.4 m left | 40% | 30% | WRONG |
+| 1.8 m forward | 0% | 40% | WRONG |
+
+It is a gross-error guard (hand moves, stale startup pose: 0.5-1.8 m), not a
+precise check; small errors in directions the view does not constrain pass.
+The correct pose's margin is ~5 points, so false refusals are possible - they
+fail safe. `relocalise.py`'s /initialpose hint was removed with the search.
+
+### Lifelong SLAM for navigation (2026-10-13, user decision)
+
+"Update map in every navigation": `scripts/bringup_nav.sh` now starts
+`robot.launch.py slam:=true` by default (`--localization` for a frozen map).
+Moved furniture is re-mapped instead of lingering as phantom obstacles, and the
+stored appearance keeps up with the room - the cause of Problem 38. Costs: DB
+grows ~10 MB per metre; a false loop closure could bend the map (monitor_slam,
+and back up `~/.ros/rtabmap.db` before long sessions).
+
 ### Problem 38 — relocalisation fails when the room has changed (2026-10-13)
 
 The robot powered off mid-spin (pack discharged - nothing in the stack

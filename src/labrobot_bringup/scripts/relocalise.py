@@ -32,7 +32,7 @@ import time
 
 import rclpy
 import tf2_ros
-from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
+from geometry_msgs.msg import Twist
 from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.node import Node
 from rtabmap_msgs.msg import Info
@@ -49,7 +49,6 @@ class Reloc(Node):
         super().__init__('relocalise')
         self.buf = tf2_ros.Buffer(); tf2_ros.TransformListener(self.buf, self)
         self.pub = self.create_publisher(Twist, '/diff_drive_controller/cmd_vel_unstamped', 10)
-        self.init_pub = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
         self.accepted = 0          # RTAB-Map loop closures / localisations accepted
         self.create_subscription(Info, '/info', self._on_info, 10)
 
@@ -60,25 +59,6 @@ class Reloc(Node):
         # rejecting the very next localisations.
         if m.loop_closure_id:
             self.accepted += 1
-
-    def hint(self, x, y, yaw):
-        """Give RTAB-Map an initial-pose hint (the standard "2D Pose Estimate").
-
-        After a hand move RTAB-Map rejects the TRUE match as a "teleport": its
-        odometry cache (RGBD/MaxOdomCacheSize) and the proximity links built at
-        the stale pose contradict it (seen: error ratio 5.28 and 3.76 against a
-        limit of 3.0). /initialpose replaces that stale pose and clears the
-        cache, so the next real visual match is consistent and accepted. The
-        hint only needs to be roughly right - RTAB-Map's match refines it.
-        """
-        m = PoseWithCovarianceStamped()
-        m.header.frame_id = 'map'; m.header.stamp = self.get_clock().now().to_msg()
-        m.pose.pose.position.x, m.pose.pose.position.y = x, y
-        m.pose.pose.orientation.z, m.pose.pose.orientation.w = math.sin(yaw/2), math.cos(yaw/2)
-        m.pose.covariance[0] = m.pose.covariance[7] = 0.25 ** 2
-        m.pose.covariance[35] = math.radians(10) ** 2
-        for _ in range(3):
-            self.init_pub.publish(m); self.spin_for(0.2)
 
     def spin_for(self, s):
         t = time.time()
@@ -115,11 +95,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--spin', action='store_true',
                     help='rotate in place between checks (needs ~0.3 m clear all round)')
-    ap.add_argument('--hint', action='store_true',
-                    help='feed the check\'s estimate to RTAB-Map on /initialpose when the '
-                         'pose looks wrong. OFF by default: the check is not reliable at every '
-                         'heading (2026-10-13 it called a pose fine, then 1.1 m wrong one 45 deg '
-                         'turn later), and hints from it pushed the pose around.')
     ap.add_argument('--settle', type=float, default=3.0,
                     help='seconds to hold still before each check (RTAB-Map runs at 1 Hz)')
     args, _ = ap.parse_known_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
@@ -131,20 +106,11 @@ def main():
     # the last session's pose although the robot had been moved; the check
     # once passed on a 14-point margin that a 15-point threshold let through.
     steps = 9 if args.spin else 1          # 8 x 45 deg = one full turn, plus the start
-    hinted = False
     for k in range(steps):
         if k:
             print(f'  turned {n.turn(45):.0f} deg (step {k}/8)'); n.spin_for(args.settle)
         r = localisation_check.check(n, n.buf)
         print(f'  check {k}: {r["verdict"]} - {r["why"]}   [RTAB-Map accepted: {n.accepted}]')
-        if args.hint and r['verdict'] == 'WRONG' and not r['at_edge']:
-            bx, by, byaw = r['best_pose']
-            print(f'  -> hinting RTAB-Map with the check\'s estimate x={bx:+.2f} y={by:+.2f} '
-                  f'yaw={math.degrees(byaw):+.0f} deg')
-            n.accepted = 0; n.hint(bx, by, byaw); hinted = True
-            n.spin_for(args.settle + 3)
-            r = localisation_check.check(n, n.buf)
-            print(f'     after hint: {r["verdict"]} - {r["why"]}   [RTAB-Map accepted: {n.accepted}]')
         if r['verdict'] == 'OK' and n.accepted > 0:
             print('  costmaps cleared' if n.clear() else '  WARNING: costmap clear failed')
             print('  RELOCALISED - RTAB-Map matched and the check agrees; safe to send goals')
