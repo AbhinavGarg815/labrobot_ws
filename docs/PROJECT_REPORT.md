@@ -943,6 +943,29 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### Problem 38 — relocalisation fails when the room has changed (2026-10-13)
+
+The robot powered off mid-spin (pack discharged - nothing in the stack
+monitors battery voltage; see Open risks). After restart, from an open spot:
+two full 45-deg-step turns, RTAB-Map accepted **no** global closures.
+
+- Spin 1 (default): 30 candidates, 23 at exactly 0/20 inliers, best 12/20.
+- Spin 2 with `RGBD/LoopClosureReextractFeatures: true` (fresh features from
+  the stored images instead of pairing by vocabulary word ID): 15
+  candidates, 11 at 0/20, best **18/20** twice, one "localization was good".
+  Kept on permanently in `mapping.launch.py`.
+
+The user confirms objects have moved since mapping, and lighting differs
+(evening vs afternoon). Mapping accepted 141 closures because it matched
+against views minutes old. **Conclusion:** a single-session appearance map of a
+changing lab does not relocalise reliably. Standard remedy: multi-session
+mapping - extend the map in the current layout/light so RTAB-Map holds several
+appearances of each place.
+
+Also: `localisation_check` is not reliable at every heading (OK, then "1.1 m
+wrong" after a pure 45 deg turn), and feeding its estimate to /initialpose
+pushed the pose around. `relocalise.py --hint` is now opt-in, off by default.
+
 ### Problem 37 — relocalising after a hand move (2026-10-12)
 
 **What goes wrong.** After the robot is carried (or the Jetson restarts with

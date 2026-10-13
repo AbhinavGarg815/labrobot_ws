@@ -115,6 +115,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--spin', action='store_true',
                     help='rotate in place between checks (needs ~0.3 m clear all round)')
+    ap.add_argument('--hint', action='store_true',
+                    help='feed the check\'s estimate to RTAB-Map on /initialpose when the '
+                         'pose looks wrong. OFF by default: the check is not reliable at every '
+                         'heading (2026-10-13 it called a pose fine, then 1.1 m wrong one 45 deg '
+                         'turn later), and hints from it pushed the pose around.')
     ap.add_argument('--settle', type=float, default=3.0,
                     help='seconds to hold still before each check (RTAB-Map runs at 1 Hz)')
     args, _ = ap.parse_known_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
@@ -132,7 +137,7 @@ def main():
             print(f'  turned {n.turn(45):.0f} deg (step {k}/8)'); n.spin_for(args.settle)
         r = localisation_check.check(n, n.buf)
         print(f'  check {k}: {r["verdict"]} - {r["why"]}   [RTAB-Map accepted: {n.accepted}]')
-        if r['verdict'] == 'WRONG' and not r['at_edge']:
+        if args.hint and r['verdict'] == 'WRONG' and not r['at_edge']:
             bx, by, byaw = r['best_pose']
             print(f'  -> hinting RTAB-Map with the check\'s estimate x={bx:+.2f} y={by:+.2f} '
                   f'yaw={math.degrees(byaw):+.0f} deg')

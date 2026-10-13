@@ -137,6 +137,13 @@ def generate_launch_description():
         # closure folds the map in half irrecoverably.
         'RGBD/OptimizeMaxError': s('3.0'),
         'Vis/MinInliers': s('20'),
+        # Re-extract fresh features from the stored images for loop-closure
+        # geometry, instead of pairing features by their quantised vocabulary
+        # word IDs ("Raw features are not saved in database"). Across days -
+        # different light, furniture moved - word-ID pairing is close to random:
+        # 23 of 30 relocalisation candidates came back with exactly 0/20 inliers.
+        # Re-extracted, the best near-misses rose from 12/20 to 18/20 (2026-10-13).
+        'RGBD/LoopClosureReextractFeatures': s('true'),
 
         # --- mapping vs localization ----------------------------------------
         # IncrementalMemory false stops new nodes being created: the robot
