@@ -943,6 +943,15 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### Narrow gaps — accepted by the user (2026-10-14)
+
+72 cm (16 cm/side) passed with 8.9 cm minimum clearance (M4.T5b); the 61 cm
+(10 cm/side) gap was passed (M4.T5d/e) and the user has accepted this
+milestone - "leave it for now". Known residuals, parked: ~1 cm corner margins
+at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
+controller corner-cutting vs replanning not yet separated - instrumentation
+in place: gap_edges --save, record_path plans history, gap_run_report).
+
 ### M3.T6 — auto_localise uses geometry: kidnap tests (2026-10-14)
 
 `auto_localise.py` now: 360 deg turn -> geometric match (global_localise) ->
@@ -966,9 +975,9 @@ the fixed structure beyond its 2.5 m range.
   **LOCALISED**, RTAB-Map switched to mapping. Picture:
   `docs/images/autoloc_kidnap2_match.png`.
 
+**User confirmed (2026-10-14): the robot's position matches the map.**
 Open: the ambiguity margin is thin (79% vs the 80% limit, twice); turn rate
-varies strongly by spot (wheel slip); user confirmation of both locations
-pending.
+varies strongly by spot (wheel slip).
 
 ### M3.T5 — geometric global localisation, no markers (2026-10-14)
 
