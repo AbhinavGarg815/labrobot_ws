@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Bring up the robot with SLAM running, then Nav2, in the background.
+# Bring up the robot, localise it automatically, then Nav2 - in the background.
 #
 #     scripts/bringup_nav.sh                  # lifelong SLAM: map updates as it drives
 #     scripts/bringup_nav.sh --localization   # map frozen, localise only
+#
+# Both start RTAB-Map in LOCALISATION mode so only the saved map competes while
+# auto_localise spins the robot to find its pose. In the default mode
+# auto_localise then switches RTAB-Map to mapping (see auto_localise.py for why
+# starting in SLAM mode does not work).
 #
 # Lifelong SLAM is the default (user decision 2026-10-13: "update map in every
 # navigation"). The lab is rearranged often; a frozen map keeps moved furniture
@@ -22,8 +27,9 @@ STAMP=$(date +%H%M)
 ROBOT_LOG=docs/logs/nav_${STAMP}.log
 NAV_LOG=docs/logs/nav_${STAMP}_nav2.log
 STATUS=docs/logs/bringup_status
-MODE_ARG="slam:=true"
-if [ "${1:-}" = "--localization" ]; then MODE_ARG="localization:=true"; shift; fi
+MODE_ARG="localization:=true"
+THEN_MAPPING="--then-mapping"
+if [ "${1:-}" = "--localization" ]; then THEN_MAPPING=""; shift; fi
 status() { echo "$(date +%T) $*" > "$STATUS"; echo "$(date +%T) $*"; }
 
 bash scripts/stop_robot.sh >/dev/null 2>&1
@@ -40,7 +46,17 @@ grep -qE "rtabmap \([0-9]+\):" "$ROBOT_LOG" || { status "FAILED: rtabmap never s
 status "rtabmap up; starting nav2 -> $NAV_LOG"
 setsid ros2 launch labrobot_bringup navigation.launch.py > "$NAV_LOG" 2>&1 < /dev/null &
 for _ in $(seq 1 60); do
-    grep -qE "Managed nodes are active" "$NAV_LOG" && { status "READY robot=$ROBOT_LOG nav=$NAV_LOG"; exit 0; }
+    if grep -qE "Managed nodes are active" "$NAV_LOG"; then
+        # Startup localisation: spins in place until the pose is trusted, then
+        # stays up publishing /labrobot/localised (nav_goal.py requires it).
+        LOC_LOG=docs/logs/nav_${STAMP}_autoloc.log
+        # Node ids below this run's FIRST node are the saved map.
+        FIRST_ID=$(grep -m1 -oE "rtabmap \([0-9]+\):" "$ROBOT_LOG" | grep -oE "[0-9]+")
+        setsid ros2 run labrobot_bringup auto_localise.py ${FIRST_ID:+--saved-below $FIRST_ID} $THEN_MAPPING \
+            > "$LOC_LOG" 2>&1 < /dev/null &
+        status "READY robot=$ROBOT_LOG nav=$NAV_LOG autoloc=$LOC_LOG (robot spins to localise)"
+        exit 0
+    fi
     grep -qE "Aborting bringup" "$NAV_LOG" && { status "FAILED: nav2 bringup aborted"; exit 1; }
     sleep 2
 done

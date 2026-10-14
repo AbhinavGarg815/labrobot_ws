@@ -943,6 +943,30 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### M3.T4 — automatic startup localisation (2026-10-13/14, user requirement)
+
+"Robot should spin on startup and localise itself automatically up to a
+threshold, considering the dynamic environment." `auto_localise.py`, started by
+`scripts/bringup_nav.sh` after Nav2:
+- RTAB-Map starts in LOCALISATION mode (only the saved map competes - in SLAM
+  mode the current session's own fresh views always won, hypothesis 0.93-0.98,
+  so the saved map was never tested and the session stayed disconnected;
+  that DB was discarded and the 19:35 backup restored).
+- One slow continuous Nav2 Spin (0.15 rad/s, accel 0.15 rad/s^2), not 45 deg
+  steps: the drive wheels slipped at each step start (user observation).
+- Localised = >= 2 global closures to nodes that existed before this run,
+  agreeing within 0.15 m / 5 deg, and the gross-error check not WRONG.
+  `Vis/MinInliers` 15 while localising (the true place kept scoring 19/12/12
+  vs wrong places 0-9), restored to 20 before anything maps; Ctrl-C-safe.
+- Then `/rtabmap/set_mode_mapping` - lifelong SLAM, joined to the saved map.
+- Publishes latched `/labrobot/localised` + `/localisation_status`;
+  `nav_goal.py` refuses goals until true.
+
+**Result on hardware so far: NOT localised.** Mechanics verified (720 deg
+continuous turn, threshold restored to 20). From today's spot: 22 candidates,
+20 at 0/15 inliers, best 10/15; two tentative "localization was good", never
+confirmed. The week-old single map no longer matches the room well enough.
+
 ### Problem 41 — Spin refused "Collision Ahead" in open space: Iron parameter names on Humble (2026-10-14)
 
 With Problem 40 fixed, every Spin aborted with "Collision Ahead" although the

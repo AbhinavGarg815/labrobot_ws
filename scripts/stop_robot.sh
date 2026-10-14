@@ -27,6 +27,7 @@ PATTERNS=(
     # the invoking shell for the fifth time in this project - keeping every
     # pattern in THIS FILE is the only reliable defence.
     monitor_slam
+    auto_localise
     verify_wheels
     analyse_motion
     publish_cloud
@@ -59,7 +60,7 @@ PATTERNS=(
 # restarting everything costs a full relocalisation for nothing.
 if [ "${1:-}" = "--nav" ]; then
     PATTERNS=(controller_server planner_server behavior_server bt_navigator
-              velocity_smoother lifecycle_manager navigation.launch)
+              velocity_smoother lifecycle_manager navigation.launch auto_localise)
 fi
 
 SELF=$$

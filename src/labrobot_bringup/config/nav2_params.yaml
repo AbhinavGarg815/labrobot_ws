@@ -456,9 +456,12 @@ behavior_server:
     # sensor at all - the camera faces forward - so reversing is strictly blind.
     # Kept short and slow for that reason.
     simulate_ahead_time: 2.0
-    max_rotational_vel: 0.3
-    min_rotational_vel: 0.08
-    rotational_acc_lim: 0.4
+    # Slow and gentle: the drive wheels slipped on in-place turns at 0.3 rad/s
+    # with 0.4 rad/s^2 (user observation 2026-10-14 during auto_localise).
+    # Spin is used for startup localisation and recovery, never for speed.
+    max_rotational_vel: 0.15
+    min_rotational_vel: 0.05
+    rotational_acc_lim: 0.15
 
 velocity_smoother:
   ros__parameters:
