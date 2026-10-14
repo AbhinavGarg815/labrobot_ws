@@ -29,7 +29,14 @@ NAV_LOG=docs/logs/nav_${STAMP}_nav2.log
 STATUS=docs/logs/bringup_status
 MODE_ARG="localization:=true"
 THEN_MAPPING="--then-mapping"
-if [ "${1:-}" = "--localization" ]; then THEN_MAPPING=""; shift; fi
+AUTOLOC=1
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --localization) THEN_MAPPING=""; shift ;;
+        --no-autoloc)   AUTOLOC=0; shift ;;     # bring up without the startup spin
+        *) break ;;
+    esac
+done
 status() { echo "$(date +%T) $*" > "$STATUS"; echo "$(date +%T) $*"; }
 
 bash scripts/stop_robot.sh >/dev/null 2>&1
@@ -49,6 +56,9 @@ for _ in $(seq 1 60); do
     if grep -qE "Managed nodes are active" "$NAV_LOG"; then
         # Startup localisation: spins in place until the pose is trusted, then
         # stays up publishing /labrobot/localised (nav_goal.py requires it).
+        if [ "$AUTOLOC" = "0" ]; then
+            status "READY robot=$ROBOT_LOG nav=$NAV_LOG (no auto-localise)"; exit 0
+        fi
         LOC_LOG=docs/logs/nav_${STAMP}_autoloc.log
         # Node ids below this run's FIRST node are the saved map.
         FIRST_ID=$(grep -m1 -oE "rtabmap \([0-9]+\):" "$ROBOT_LOG" | grep -oE "[0-9]+")

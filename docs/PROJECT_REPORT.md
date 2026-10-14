@@ -943,6 +943,34 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### M3.T5 — geometric global localisation, no markers (2026-10-14)
+
+Requirement (user): no fiducial markers; the robot may be kidnapped and must
+find itself by rotating/moving, in a lab whose furniture moves.
+`global_localise.py`: one slow 360 deg turn stitches depth (0.10-0.90 m band,
+0.4-4 m) into a ring in the odom frame, reduced to a virtual 2D laser scan
+(nearest return per 0.5 deg). Correlative scan matching (Olson 2009) over the
+WHOLE map by FFT: likelihood field of obstacle SURFACES (occupied cells next
+to free) minus a free-space penalty (ray samples at 30/55/80% landing on
+mapped obstacles), robot restricted to mapped free space >= 15 cm from
+obstacles. Confidence = distinctness: best vs best genuinely different place
+(> 1 m or > 20 deg) must be < 80%.
+
+Synthetic (rectangular room, 20% points missing, 25% clutter): 6/6 poses
+correct (3.5 cm = half a cell, <= 1 deg), 4/6 distinct; the ambiguous ones
+are real 90/180 deg room-symmetry aliases - the move-and-retry case.
+
+Hardware, first clean run: 720 beams, search 7.1 s, **DISTINCT (runner-up 64%)**,
+pose x=+1.87 y=-0.50 yaw -82 deg vs RTAB-Map's independent x=+1.89 y=-0.42
+yaw -84 deg - **8 cm / 2 deg agreement** between geometry and appearance.
+Picture: `docs/images/global_localise_first_match.png`.
+
+Two versions failed first and were fixed: keeping every depth point smeared
+walls into radial bands and scoring against solid furniture blobs made whole
+regions match (score 0.197, ambiguous); the 60 s Spin allowance ran out at
+273 deg (actual turn rate is below the commanded 0.15 rad/s). An earlier run
+was also invalid because the robot was moved by hand mid-turn.
+
 ### M3.T4 — automatic startup localisation (2026-10-13/14, user requirement)
 
 "Robot should spin on startup and localise itself automatically up to a
