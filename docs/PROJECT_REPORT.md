@@ -943,6 +943,33 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### M3.T6 — auto_localise uses geometry: kidnap tests (2026-10-14)
+
+`auto_localise.py` now: 360 deg turn -> geometric match (global_localise) ->
+if ambiguous, turn to the most open direction (longest robot-width corridor
+in the ring) and drive 0.6 m forward (Nav2 DriveOnHeading, collision-checked),
+up to 3 viewpoints -> whole-room gate -> /initialpose to RTAB-Map (must adopt
+within 0.3 m / 10 deg) -> mapping mode. Whole-room gate: ring score >= 0.35 and
+any RTAB-Map visual closures made during the turn must AGREE (0.3 m / 10 deg),
+a disagreement refuses. The single-view check is logged only: in kidnap 1 it
+called WRONG (1% near obstacles) a pose that the geometric match and three
+RTAB-Map closures agreed on within 12 cm - its view held a chair and a person,
+the fixed structure beyond its 2.5 m range.
+
+- **Kidnap 1:** geometric (3.52, -0.15) distinct 79%; RTAB-Map closures to 1051,
+  1059, 1803 at (3.50, -0.03). Refused by the then single-view gate (fixed).
+- **Kidnap 2:** spot 1 geometric (5.47, 0.30) ambiguous 93%, RTAB-Map closures
+  1748-1750 at (5.46, 0.32); drove 0.6 m to the most open direction; spot 2
+  turn timed out at 263 deg (robot turned at 0.045 rad/s vs 0.15 commanded).
+  Allowance raised to 240 s, partial rings >= 240 deg accepted. Re-run: distinct
+  (79%), (5.07, 0.50, 98 deg), ring score 0.40, single-view check OK (80%),
+  **LOCALISED**, RTAB-Map switched to mapping. Picture:
+  `docs/images/autoloc_kidnap2_match.png`.
+
+Open: the ambiguity margin is thin (79% vs the 80% limit, twice); turn rate
+varies strongly by spot (wheel slip); user confirmation of both locations
+pending.
+
 ### M3.T5 — geometric global localisation, no markers (2026-10-14)
 
 Requirement (user): no fiducial markers; the robot may be kidnapped and must
