@@ -47,8 +47,14 @@ def generate_launch_description():
              remappings=[('cmd_vel', 'cmd_vel_nav')]),
         Node(package='nav2_planner', executable='planner_server',
              name='planner_server', output='screen', parameters=[params_file]),
+        # Same remap as the controller: recoveries (Spin, Wait) must go through
+        # the smoother to the drive like everything else. Without it the
+        # behaviour server published to /cmd_vel, which NOTHING subscribes to:
+        # every recovery Spin in every run up to 2026-10-13 commanded a dead
+        # topic and "failed" on its time allowance with the robot motionless.
         Node(package='nav2_behaviors', executable='behavior_server',
-             name='behavior_server', output='screen', parameters=[params_file]),
+             name='behavior_server', output='screen', parameters=[params_file],
+             remappings=[('cmd_vel', 'cmd_vel_nav')]),
         # Custom tree: the stock one minus the BackUp recovery, which is a
         # blind and (on this chassis) heavily rotating reverse. See the XML.
         Node(package='nav2_bt_navigator', executable='bt_navigator',

@@ -943,6 +943,16 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### Problem 40 — Nav2 recoveries never moved the robot (2026-10-13)
+
+The behaviour server (Spin, Wait, DriveOnHeading) published to `/cmd_vel`,
+which had **0 subscribers**: navigation.launch.py remapped the controller's
+`cmd_vel` to `cmd_vel_nav` (into the velocity smoother) but not the behaviour
+server's. Every recovery Spin in every run so far "failed" on its time
+allowance with the robot motionless - earlier attributed to cramped space.
+Fix: same remap on behavior_server. Verified: `/cmd_vel` no longer exists,
+`/cmd_vel_nav` has both publishers, Spin steps now complete on hardware.
+
 ### Problem 39 — the pose-search check gave false WRONGs; replaced (2026-10-13)
 
 The user could see in Foxglove that the pose was right; the search-based check
