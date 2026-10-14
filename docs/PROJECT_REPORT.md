@@ -943,6 +943,21 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### Problem 41 — Spin refused "Collision Ahead" in open space: Iron parameter names on Humble (2026-10-14)
+
+With Problem 40 fixed, every Spin aborted with "Collision Ahead" although the
+nearest obstacle was 0.9 m away (a lone lethal cell 30 cm out was a red
+herring: clearing it changed nothing). The behavior_server section used the
+Iron+ names `local_frame: odom` / `global_frame: map`. Humble's
+behavior_server declares only costmap_topic, footprint_topic, global_frame,
+robot_base_frame, transform_tolerance, cycle_frequency (checked in
+libbehavior_server_core.so) - so `local_frame` was ignored and the robot's
+MAP-frame pose was checked against the ODOM-frame local costmap. Fix:
+`global_frame: odom` plus explicit costmap/footprint topics. Verified: a 45 deg
+Spin goal now SUCCEEDS.
+**Lesson:** check parameter names against the installed distro, not examples
+from newer docs - Nav2 ignores unknown parameters silently.
+
 ### Problem 40 — Nav2 recoveries never moved the robot (2026-10-13)
 
 The behaviour server (Spin, Wait, DriveOnHeading) published to `/cmd_vel`,
