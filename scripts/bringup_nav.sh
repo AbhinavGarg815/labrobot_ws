@@ -60,6 +60,10 @@ for _ in $(seq 1 60); do
             status "READY robot=$ROBOT_LOG nav=$NAV_LOG (no auto-localise)"; exit 0
         fi
         LOC_LOG=docs/logs/nav_${STAMP}_autoloc.log
+        # Exactly one auto_localise: a leftover instance keeps publishing its
+        # own latched verdict alongside the new one.
+        pkill -TERM -f "lib/labrobot_bringup/auto_[l]ocalise" 2>/dev/null || true
+        sleep 1
         # Node ids below this run's FIRST node are the saved map.
         FIRST_ID=$(grep -m1 -oE "rtabmap \([0-9]+\):" "$ROBOT_LOG" | grep -oE "[0-9]+")
         setsid ros2 run labrobot_bringup auto_localise.py ${FIRST_ID:+--saved-below $FIRST_ID} $THEN_MAPPING \

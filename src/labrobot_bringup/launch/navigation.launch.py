@@ -69,6 +69,10 @@ def generate_launch_description():
              remappings=[('cmd_vel', 'cmd_vel_nav'),
                          ('cmd_vel_smoothed',
                           '/diff_drive_controller/cmd_vel_unstamped')]),
+        # Sequences NavigateToPose goals through a list of waypoints
+        # (FollowWaypoints action); used by scripts/waypoints.py.
+        Node(package='nav2_waypoint_follower', executable='waypoint_follower',
+             name='waypoint_follower', output='screen', parameters=[params_file]),
         # The lifecycle manager must list every managed node, in start order.
         # A node missing here simply never activates, and the symptom is Nav2
         # accepting a goal and then doing nothing at all.
@@ -79,6 +83,7 @@ def generate_launch_description():
                                          'planner_server',
                                          'behavior_server',
                                          'bt_navigator',
+                                         'waypoint_follower',
                                          'velocity_smoother']}]),
     ]
 

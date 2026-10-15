@@ -54,6 +54,8 @@ already joined to the saved one.
 """
 import argparse
 import math
+import os
+import signal
 import sys
 import time
 
@@ -70,7 +72,8 @@ from nav2_msgs.srv import ClearEntireCostmap
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from rtabmap_msgs.msg import Info
+from rtabmap_msgs.msg import Info, Link
+from rtabmap_msgs.srv import AddLink, GetMap
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Empty
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
@@ -99,6 +102,7 @@ class AutoLocalise(Node):
         self.pending = []         # old-map closure ids waiting for TF to settle
         self.corrections = []     # (closure id, x, y, yaw) of map->odom after each
         self.closure_poses = []   # (closure id, x, y, yaw) of the ROBOT in the map, per closure
+        self.last_ref = 0
         self.create_subscription(Info, '/info', self.on_info, 10)
 
     def status(self, ok, text):
@@ -107,6 +111,7 @@ class AutoLocalise(Node):
         print(f'  [{"LOCALISED" if ok else "not localised"}] {text}', flush=True)
 
     def on_info(self, m):
+        self.last_ref = m.ref_id
         if self.first_id is None and m.ref_id > 0:
             self.first_id = m.ref_id
         if (m.loop_closure_id and self.first_id is not None
@@ -258,6 +263,83 @@ class AutoLocalise(Node):
         g = up.call_async(Empty.Request()); rclpy.spin_until_future_complete(self, g, timeout_sec=10.0)
         return g.result() is not None
 
+    def call(self, srv_type, name, req, timeout=15.0):
+        cli = self.create_client(srv_type, name)
+        if not cli.wait_for_service(timeout_sec=timeout):
+            return None
+        f = cli.call_async(req); rclpy.spin_until_future_complete(self, f, timeout_sec=timeout)
+        return f.result()
+
+    def saved_node_poses(self, saved_below):
+        """{id: (x, y, yaw)} of the saved map's nodes, optimised, from RTAB-Map."""
+        req = GetMap.Request(); req.global_map = True; req.optimized = True; req.graph_only = True
+        res = self.call(GetMap, '/rtabmap/get_map_data', req, timeout=30.0)
+        if res is None:
+            return {}
+        g = res.data.graph
+        return {i: (p.position.x, p.position.y, yaw_of(p.orientation))
+                for i, p in zip(g.poses_id, g.poses) if 0 < i < saved_below}
+
+    def join_saved_map(self, robot_pose, saved_below):
+        """Switch to mapping AND keep the saved map's frame.
+
+        Switching RTAB-Map from localisation to mapping does NOT carry the
+        localisation over: it starts a new, disconnected session with its own
+        origin. Seen 2026-10-14 - map->odom jumped from (5.65, 0.70, 90 deg) to
+        (-0.13, -0.14, -6 deg), every waypoint (saved in the old frame) was
+        then in the wrong place and the whole mission failed; the new session
+        only joins the old map on a later strong visual closure (it got 16/20
+        and 13/20 inliers, not enough).
+
+        So the robot's known pose is written into the graph explicitly: a user
+        loop closure (Link type kUserClosure = 4) from the new session's first
+        node to the nearest saved node, transform = new^-1 * saved (RTAB-Map's
+        convention: pose_to = pose_from * transform). Verified afterwards: the
+        robot's map pose must not have moved."""
+        nodes = self.saved_node_poses(saved_below)
+        if not nodes:
+            return False, 'could not read the saved map graph'
+        rx, ry, rth = robot_pose
+        kid, (kx, ky, kth) = min(nodes.items(), key=lambda kv: math.hypot(kv[1][0]-rx, kv[1][1]-ry))
+        if math.hypot(kx - rx, ky - ry) > 1.5:
+            return False, f'nearest saved node {kid} is {math.hypot(kx-rx, ky-ry):.1f} m away - too far to link'
+        before = self.last_ref
+        if not self.set_mapping_mode():
+            return False, 'set_mode_mapping failed'
+        t0 = time.time()                      # first node of the new session
+        while (self.last_ref <= before or self.last_ref < saved_below) and time.time() - t0 < 20:
+            self.spin_for(0.2)
+        nid = self.last_ref
+        if nid <= before or nid < saved_below:
+            return False, 'no new node after switching to mapping'
+        c, s_ = math.cos(rth), math.sin(rth)
+        dx, dy = kx - rx, ky - ry
+        lx, ly = c*dx + s_*dy, -s_*dx + c*dy
+        dth = math.atan2(math.sin(kth - rth), math.cos(kth - rth))
+        link = Link(); link.from_id = int(nid); link.to_id = int(kid); link.type = 4
+        link.transform.translation.x, link.transform.translation.y = float(lx), float(ly)
+        link.transform.rotation.z, link.transform.rotation.w = math.sin(dth/2), math.cos(dth/2)
+        info = [0.0] * 36
+        for k, sigma in ((0, 0.05), (7, 0.05), (14, 0.01), (21, 0.01), (28, 0.01), (35, math.radians(3))):
+            info[k] = 1.0 / sigma ** 2
+        link.information = info
+        req = AddLink.Request(); req.link = link
+        if self.call(AddLink, '/rtabmap/add_link', req) is None:
+            return False, 'add_link service failed'
+        self.spin_for(3.0)
+        try:
+            mx, my, mth = self.map_pose()
+        except Exception:  # noqa: BLE001
+            return False, 'no map pose after linking'
+        jump = math.hypot(mx - rx, my - ry)
+        djaw = abs(math.degrees(math.atan2(math.sin(mth - rth), math.cos(mth - rth))))
+        if jump > 0.15 or djaw > 5:
+            return False, f'map pose moved {jump:.2f} m / {djaw:.0f} deg after linking - link rejected'
+        return True, f'new node {nid} linked to saved node {kid}; map pose held ({jump*100:.0f} cm)'
+
+    def set_localisation_mode(self):
+        return self.call(Empty, '/rtabmap/set_mode_localization', Empty.Request()) is not None
+
     def set_mapping_mode(self):
         cli = self.create_client(Empty, '/rtabmap/set_mode_mapping')
         if not cli.wait_for_service(timeout_sec=10.0):
@@ -339,18 +421,26 @@ def main():
     # 2026-10-14, leaving RTAB-Map on the lowered value). Without the handler,
     # Ctrl-C is a plain KeyboardInterrupt and the restore still runs.
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO); n = AutoLocalise()
+    # SIGTERM behaves like Ctrl-C. A run that failed earlier stayed alive and
+    # ignored SIGINT (2026-10-14), leaving a stale latched "localised: false"
+    # alongside the new run's "true" - listeners got whichever came last.
+    def _interrupt(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _interrupt)
     try:
         rc = run(n, args)
     except KeyboardInterrupt:
-        n.destroy_node(); rclpy.shutdown(); return 130
-    if not args.once:
+        rc = 130
+    if not args.once and rc != 130:
         try:
             while rclpy.ok():
                 rclpy.spin_once(n, timeout_sec=0.5)
         except KeyboardInterrupt:
             pass
-    n.destroy_node(); rclpy.shutdown()
-    return rc
+    try:
+        n.destroy_node(); rclpy.try_shutdown()
+    finally:
+        os._exit(rc)   # never linger: a leftover instance's latched status is wrong
 
 
 def run(n, args):
@@ -470,16 +560,25 @@ def _run(n, args):
 
     n.clear_costmaps()
     n.set_rtabmap_param('Vis/MinInliers', args.map_min_inliers)    # strict before mapping
+    mode = 'localisation (map frozen)'
     if args.then_mapping:
-        if n.set_mapping_mode():
-            print('  RTAB-Map switched to MAPPING mode: the map now updates while '
-                  'navigating, joined to the saved map', flush=True)
+        try:
+            here = n.map_pose()
+        except Exception:  # noqa: BLE001
+            here = (x, y, th)
+        ok, why = n.join_saved_map(here, n.first_id or args.saved_below or 10**9)
+        if ok:
+            mode = 'MAPPING, joined to the saved map'
+            print(f'  {why}', flush=True)
         else:
-            print('  WARNING: could not switch RTAB-Map to mapping mode - it stays in '
-                  'localisation mode (map frozen)', flush=True)
+            # Never navigate in a disconnected session: back to localisation.
+            print(f'  WARNING: could not join the saved map ({why}) - returning to '
+                  'localisation mode, map frozen', flush=True)
+            n.set_localisation_mode(); n.spin_for(1.0); n.hint(x, y, th); n.spin_for(3.0)
     n.status(True, f'geometric match x={x:+.2f} y={y:+.2f} yaw={math.degrees(th):+.0f} deg '
                    f'(runner-up {out["ratio"]:.0%}, ring score {out["score"]:.2f}); '
-                   f'{len(agree)}/{len(before)} independent visual closures agree; RTAB-Map adopted it')
+                   f'{len(agree)}/{len(before)} independent visual closures agree; RTAB-Map adopted it; '
+                   f'mode: {mode}')
     return 0
 
 if __name__ == '__main__':

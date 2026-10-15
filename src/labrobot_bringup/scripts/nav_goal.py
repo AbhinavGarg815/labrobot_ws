@@ -94,32 +94,11 @@ def main():
     # The goal below is RELATIVE to the current pose, so a wrong pose means a
     # wrong goal - this must be checked first, not discovered mid-run.
     if not args.skip_localisation_check:
-        # 1. auto_localise's verdict (latched). Without it there is no evidence
-        #    the startup pose was ever confirmed.
-        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-        from std_msgs.msg import Bool, String
-        lat = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
-                         durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        got = {}
-        node.create_subscription(Bool, '/labrobot/localised', lambda m: got.__setitem__('ok', m.data), lat)
-        node.create_subscription(String, '/labrobot/localisation_status',
-                                 lambda m: got.__setitem__('why', m.data), lat)
-        t_end = time.time() + 3.0
-        while time.time() < t_end and 'ok' not in got:
-            rclpy.spin_once(node, timeout_sec=0.1)
-        if not got.get('ok', False):
-            print(f'  NOT sending the goal: startup localisation not confirmed - '
-                  f'{got.get("why", "no /labrobot/localised (is auto_localise running?)")}')
-            node.destroy_node(); rclpy.shutdown(); return 1
-        # 2. The gross-error check on the CURRENT view - the robot may have been
-        #    carried since auto_localise succeeded.
-        import localisation_check   # sibling script, installed alongside this one
-        print('  checking localisation against the map ...')
-        r = localisation_check.check(node, node.buf)
-        print(f'  localisation: {r["verdict"]} - {r["why"]}')
-        if r['verdict'] != 'OK':
-            print('  NOT sending the goal. Let RTAB-Map relocalise (rotate slowly '
-                  'in place, or wait facing mapped structure), then try again.')
+        import nav_gate   # sibling script, installed alongside this one
+        ok, why = nav_gate.ready_to_navigate(node, node.buf)
+        print(f'  localisation: {why}')
+        if not ok:
+            print('  NOT sending the goal.')
             node.destroy_node(); rclpy.shutdown(); return 1
         here = node.current_pose()   # re-read: the check took a few seconds
         x0, y0, yaw0 = here

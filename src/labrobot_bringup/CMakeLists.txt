@@ -19,6 +19,8 @@ install(
     scripts/relocalise.py
     scripts/auto_localise.py
     scripts/global_localise.py
+    scripts/nav_gate.py
+    scripts/waypoints.py
     scripts/nav_goal.py
     scripts/analyse_motion.py
     scripts/verify_wheels.py

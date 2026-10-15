@@ -943,6 +943,50 @@ Two things to improve before the 61 cm (10 cm/side) gap:
    and the rest of the run was clean. A stale mark near the start; not yet
    identified.
 
+### M5 — waypoint navigation (2026-10-14, in progress)
+
+- `waypoint_follower` added to navigation.launch.py (FollowWaypoints action,
+  `stop_on_failure: false`, 2 s wait at each waypoint).
+- `scripts/waypoints.py`: `save` (current pose) / `pick` (pose clicked in
+  Foxglove on /waypoint_pick) / `add NAME X Y YAW` / `list` / `delete` /
+  `go A B C [--return] [--loop N]`. Stored in `docs/maps/waypoints.yaml`.
+- `scripts/nav_gate.py`: the shared pre-motion gate (auto_localise verdict +
+  current-view check) used by nav_goal.py and waypoints.py.
+- auto_localise: exits on SIGINT/SIGTERM (a failed run had lingered, ignoring
+  SIGINT, and its stale latched "localised: false" competed with the new
+  run's "true"); bringup_nav.sh kills any leftover instance first.
+
+**Problem 42 — switching to mapping mode started a NEW map.** First mission
+(wp1 -> wp2 -> wp3 -> start): "SUCCEEDED, 0/4 reached", every leg failed.
+After `set_mode_mapping`, map->odom reset from (5.65, 0.70, 90 deg) to
+(-0.13, -0.14, -6 deg): RTAB-Map began a disconnected session with its own
+origin, so the waypoints (old-map frame) were in the wrong place. It joins the
+old map only on a later strong visual closure (got 16/20, 13/20). That session
+was discarded and the clean map restored.
+Fix (built, NOT yet tested): `join_saved_map()` - after switching, add a user
+loop closure (`/rtabmap/add_link`, type kUserClosure) from the new session's
+first node to the nearest saved node using the known pose, then verify the
+robot's map pose did not move (<= 15 cm / 5 deg); on failure return to
+localisation mode (frozen but correct map).
+
+Session ended on low battery. The last bringup's rtabmap died with "could not
+create service: rcl node's context is invalid" - confirmed harmless: it died
+at 16:46:41, the moment the stop was sent while it was still loading.
+
+### Problem 43 — git repository corrupted by the power cut (2026-10-15)
+
+A commit made at 16:47, a minute before the battery died, left 22 zero-length
+object files (the commit, its trees and blobs) and `main` pointing at the empty
+commit: every git command failed with "loose object ... is corrupt". Files had
+been written but not flushed to disk when power went.
+Recovery: backed up `.git` (`~/git_backup_20261015_1631`), confirmed the
+previous commit 9834eb6 intact, pointed `main` back at it, deleted the empty
+objects, cleaned the truncated reflog line, rebuilt the index from HEAD and
+re-staged from the intact working tree; `git fsck --full` clean. Nothing lost.
+Prevention: `git config core.fsyncObjectFiles true` (git 2.34) so each commit
+reaches the disk before git reports success; `sync` after commits. On a
+battery robot, also stop the stack and run `sync` before switching off.
+
 ### Narrow gaps — accepted by the user (2026-10-14)
 
 72 cm (16 cm/side) passed with 8.9 cm minimum clearance (M4.T5b); the 61 cm

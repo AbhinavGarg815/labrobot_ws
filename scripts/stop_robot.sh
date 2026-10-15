@@ -28,6 +28,7 @@ PATTERNS=(
     # pattern in THIS FILE is the only reliable defence.
     monitor_slam
     auto_localise
+    waypoints.py
     verify_wheels
     analyse_motion
     publish_cloud
@@ -55,12 +56,14 @@ PATTERNS=(
     spawner
 )
 
-# --nav: stop ONLY the Nav2 nodes, leaving camera, drivetrain, EKF and rtabmap
-# running. Restarting Nav2 alone is the common case (a params change), and
+# --nav: stop ONLY the Nav2 nodes, leaving camera, drivetrain, EKF, rtabmap
+# and auto_localise running (auto_localise holds the latched "localised"
+# status that nav_goal.py and waypoints.py require - killing it would force a
+# needless re-localisation). Restarting Nav2 alone is the common case (a params change), and
 # restarting everything costs a full relocalisation for nothing.
 if [ "${1:-}" = "--nav" ]; then
     PATTERNS=(controller_server planner_server behavior_server bt_navigator
-              velocity_smoother lifecycle_manager navigation.launch auto_localise)
+              velocity_smoother lifecycle_manager navigation.launch waypoint_follower)
 fi
 
 SELF=$$

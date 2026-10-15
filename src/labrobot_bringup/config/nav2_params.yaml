@@ -485,3 +485,17 @@ velocity_smoother:
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: false
+    loop_rate: 20
+    # Carry on after a missed waypoint and report it in missed_waypoints, rather
+    # than abandoning the whole mission: in a lab where a chair can block one
+    # waypoint, the rest of the route is still worth doing.
+    stop_on_failure: false
+    waypoint_task_executor_plugin: wait_at_waypoint
+    wait_at_waypoint:
+      plugin: nav2_waypoint_follower::WaitAtWaypoint
+      enabled: true
+      waypoint_pause_duration: 2000   # ms: settles the robot, and RTAB-Map gets still frames
