@@ -1017,7 +1017,14 @@ pose from an earlier viewpoint with the current one). Every attempt's ring and
 verdict is now saved to docs/logs/autoloc/ for post-mortems - this failure
 could not be analysed because only the final picture was kept.
 Evidence base: both user-verified localisations had agreeing visual closures;
-the wrong one had none. Not yet tested on hardware.
+the wrong one had none.
+**Hardware test 2026-10-26 (same area as the wrong pose):** 4 viewpoints,
+geometric best (2.02,-0.35) / (5.92,-4.15) / (3.92,-0.15) / (1.52,-0.45),
+runner-up 95-100% every time, ring score 0.37-0.46, ZERO visual closures ->
+**NOT localised** - the correct refusal where the old rule had given a
+confident wrong answer. Neither shape nor appearance recognises this area: the
+map is 19 days old (v4, 10-07) and lifelong updating never ran (Problems 42,
+44). Remedy: fresh map, then lifelong SLAM via the now-verified map join.
 **Lesson:** a gate removed after one false alarm let through the next real
 error. Weigh a check's false alarms against what it catches before removing it.
 
