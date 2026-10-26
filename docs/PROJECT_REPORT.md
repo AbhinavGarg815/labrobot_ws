@@ -996,6 +996,31 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 44 — auto_localise accepted a WRONG pose (2026-10-15)
+
+Cold start: spot 1 geometric (2.92, -0.25) ambiguous 82%, moved 0.6 m, spot 2
+(2.27, -0.30, 182 deg) distinct 76%, ring score 0.53; no RTAB-Map visual
+closure; single-view check WRONG (9% near obstacles) - but it no longer gated
+(Problem/M3.T6 change after a false alarm). Declared LOCALISED, joined the saved
+map (user link) and switched to mapping. **The user saw the pose was wrong.**
+Stopped at once; clean map restored, wrongly-linked DB kept as backup.
+The two geometric estimates were mutually consistent (the odometry move
+predicts spot 2 within 5 cm), so this was not noise: the matcher consistently
+found a different, same-shaped part of the lab.
+
+Fix - acceptance requires TWO INDEPENDENT METHODS to agree: a distinct,
+well-fitting geometric match AND at least one RTAB-Map global (appearance)
+closure implying the same map->odom correction. Otherwise move to another
+viewpoint and look again (now up to 4), then report NOT localised. Corrections
+are compared rather than robot poses (the old gate compared a closure's robot
+pose from an earlier viewpoint with the current one). Every attempt's ring and
+verdict is now saved to docs/logs/autoloc/ for post-mortems - this failure
+could not be analysed because only the final picture was kept.
+Evidence base: both user-verified localisations had agreeing visual closures;
+the wrong one had none. Not yet tested on hardware.
+**Lesson:** a gate removed after one false alarm let through the next real
+error. Weigh a check's false alarms against what it catches before removing it.
+
 ### M3.T6 — auto_localise uses geometry: kidnap tests (2026-10-14)
 
 `auto_localise.py` now: 360 deg turn -> geometric match (global_localise) ->

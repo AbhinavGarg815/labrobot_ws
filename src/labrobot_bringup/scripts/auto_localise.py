@@ -23,23 +23,23 @@ From one heading it often cannot (2026-10-13: a cluttered view of moved
 furniture gave 30 candidates, 23 with exactly 0/20 inliers). Turning shows it
 walls, shelving and other structure in every direction.
 
-When is it "localised" - geometry first, for a kidnapped robot in a changing room
---------------------------------------------------------------------------------
+When is it "localised" - two independent methods must agree
+-----------------------------------------------------------
 1. One slow 360 deg turn builds a depth ring; global_localise.match() searches
-   the whole map for where the room's SHAPE fits (walls and fixed structure do
-   not move; appearance does). See global_localise.py.
-2. The match must be DISTINCT: the best genuinely different place scores
-   < 80% of the best. If not (symmetric spot, too much moved), the robot drives
-   --move metres towards the most open direction (forward only, collision-
-   checked) and turns again, up to --max-spots viewpoints.
-3. Whole-room confirmation: the ring must fit the map (score >= 0.35), and any
-   RTAB-Map visual closures made during the turn must AGREE with the geometric
-   pose (0.3 m / 10 deg) - if they disagree it refuses. Then the pose goes to
-   RTAB-Map on /initialpose, which must adopt it. (The single-view check is
-   logged only - see _run for why it cannot veto whole-room evidence.)
-Only then does it map. Appearance-only relocalisation (the earlier design: two
-agreeing RTAB-Map closures) is kept as a logged bonus - a week after mapping it
-produced no accepted closure at all (2026-10-14).
+   the whole map for where the room's SHAPE fits. The match must be distinct
+   (runner-up < 80%) and fit well (ring score >= 0.35).
+2. AND at least one RTAB-Map global loop closure - recognition by APPEARANCE -
+   must imply the same map->odom correction (0.3 m / 10 deg). Corrections, not
+   robot poses, are compared, so closures from earlier viewpoints still count
+   after the robot has moved.
+3. Otherwise (ambiguous, poor fit, no or disagreeing visual closure) the robot
+   drives --move metres towards the most open direction (forward only,
+   collision-checked) and looks again, up to --max-spots viewpoints; then it
+   reports NOT localised rather than guess.
+Why both: on 2026-10-15 a distinct geometric match, consistent across two
+viewpoints, was accepted alone and was WRONG - a same-shaped part of the lab.
+Both localisations the user verified had agreeing visual closures.
+Every attempt's ring, verdict and picture is kept in docs/logs/autoloc/.
 
 Why localisation mode first, then mapping (--then-mapping)
 ---------------------------------------------------------
@@ -372,6 +372,23 @@ def most_open_bearing(ring, half_width=0.30, step_deg=10):
     return best
 
 
+def save_attempt(args, spot, ring, out, grid):
+    """Keep every attempt's ring and verdict for post-mortems (docs/logs/autoloc/).
+    The wrong localisation of 2026-10-15 could not be analysed afterwards
+    because nothing but the final picture was kept."""
+    import json
+    d = os.path.join(os.path.dirname(args.match_png) or '.', 'autoloc')
+    os.makedirs(d, exist_ok=True)
+    stamp = time.strftime('%Y%m%d_%H%M%S')
+    rec = {k: v for k, v in out.items() if k in ('ok', 'score', 'runner_up', 'ratio', 'pose',
+                                                  'runner_pose', 'points', 'why')}
+    rec['ring'] = ring.tolist()
+    with open(os.path.join(d, f'{stamp}_spot{spot + 1}.json'), 'w') as f:
+        json.dump(rec, f)
+    if 'pose' in out:
+        gl.save_debug_png(os.path.join(d, f'{stamp}_spot{spot + 1}.png'), grid, ring, out['pose'])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--turns', type=float, default=2.0, help='full turns before giving up')
@@ -395,7 +412,7 @@ def main():
                          'count, so a lower count is safe for LOCALISING - but the map itself '
                          'is only ever built with the stricter value.')
     ap.add_argument('--map-min-inliers', type=int, default=20)
-    ap.add_argument('--max-spots', type=int, default=3,
+    ap.add_argument('--max-spots', type=int, default=4,
                     help='viewpoints to try: if the geometric match is ambiguous, drive to '
                          'the most open direction and spin again')
     ap.add_argument('--move', type=float, default=0.6, help='metres to drive between spots')
@@ -475,16 +492,30 @@ def _run(n, args):
     col = gl.RingCollector(n, n.buf)
     n.spin_for(2.0)
 
-    out = None
+    def correction_for(pose):
+        """map->odom implied by a robot pose in the map, using odom->base NOW.
+        Two estimates taken at different moments are compared through this:
+        the correction stays constant while odometry holds, whereas the robot
+        pose changes every time the robot moves."""
+        ob = n.buf.lookup_transform('odom', 'base_footprint', rclpy.time.Time())
+        ox, oy = ob.transform.translation.x, ob.transform.translation.y
+        oth = yaw_of(ob.transform.rotation)
+        x, y, th = pose
+        cth = th - oth; c, s_ = math.cos(cth), math.sin(cth)
+        return x - (c*ox - s_*oy), y - (s_*ox + c*oy), cth
+
+    def same(c1, c2):
+        return (math.hypot(c1[0]-c2[0], c1[1]-c2[1]) <= 0.30 and
+                abs(math.degrees(math.atan2(math.sin(c1[2]-c2[2]), math.cos(c1[2]-c2[2])))) <= 10)
+
+    accepted = None; ring = None; out = None; reason = ''
     for spot in range(args.max_spots):
         col.pts, col.last_yaw, col.turned, col.frames = [], None, 0.0, 0
         n.status(False, f'spot {spot + 1}/{args.max_spots}: turning 360 deg to see the room')
         # Generous allowance: the robot can turn far slower than commanded -
         # 0.045 rad/s against 0.15 at one spot on 2026-10-14 (wheel slip) - and
-        # a slow, steady turn still builds a valid ring. Running out of time is
-        # not a reason to give up if most of the room has been seen.
-        allowance = 240
-        n.spin_continuous(360.0, allowance, lambda _d: False)
+        # a slow, steady turn still builds a valid ring.
+        n.spin_continuous(360.0, 240, lambda _d: False)
         n.spin_for(1.0)
         if math.degrees(col.turned) < args.min_turn:
             n.status(False, f'spot {spot + 1}: only turned {math.degrees(col.turned):.0f} deg '
@@ -492,56 +523,54 @@ def _run(n, args):
             return 1
         ring = col.ring_in_robot_frame(grid.info.resolution)
         out = gl.match(ring, grid)
+        save_attempt(args, spot, ring, out, grid)
         if 'pose' not in out:
-            print(f'  spot {spot + 1}: {out["why"]}', flush=True)
+            reason = out['why']
         else:
             x, y, th = out['pose']
+            geo = correction_for(out['pose'])
+            vis = [(c[1], c[2], c[3]) for c in n.corrections]
+            agree = [v for v in vis if same(v, geo)]
             print(f'  spot {spot + 1}: {len(ring)} beams, best x={x:+.2f} y={y:+.2f} '
-                  f'yaw={math.degrees(th):+.0f}, runner-up {out["ratio"]:.0%} -> '
-                  f'{"DISTINCT" if out["ok"] else "ambiguous"}', flush=True)
-            if out['ok']:
-                break
+                  f'yaw={math.degrees(th):+.0f}, runner-up {out["ratio"]:.0%} '
+                  f'({"distinct" if out["ok"] else "ambiguous"}), ring score {out["score"]:.2f}; '
+                  f'visual closures {len(agree)}/{len(vis)} agree', flush=True)
+            # ACCEPT ONLY WHEN TWO INDEPENDENT METHODS AGREE: the room's shape
+            # (distinct, well-fitting geometric match) AND its appearance (at
+            # least one RTAB-Map global closure implying the same correction).
+            # Geometry alone was accepted on 2026-10-15 and was WRONG: it matched
+            # a same-shaped part of the lab, consistently, from two viewpoints
+            # - consistency between viewpoints cannot catch that. Both verified
+            # localisations (kidnap 1 and 2) had agreeing visual closures.
+            if out['ok'] and out['score'] >= args.min_ring_score and agree:
+                accepted = (out, ring, len(agree), len(vis)); break
+            if not out['ok']:
+                reason = f'geometry ambiguous (runner-up {out["ratio"]:.0%})'
+            elif out['score'] < args.min_ring_score:
+                reason = f'ring fits the map poorly ({out["score"]:.2f})'
+            elif vis:
+                reason = f'{len(vis)} visual closure(s) DISAGREE with the geometric pose'
+            else:
+                reason = 'no visual (appearance) confirmation of the geometric pose yet'
         if spot + 1 < args.max_spots:
             b, clear = most_open_bearing(ring)
             if clear < args.move + 0.5:
-                n.status(False, f'ambiguous here and no open direction to move '
-                                f'(best {clear:.1f} m) - move the robot to open space')
-                return 1
-            print(f'  ambiguous: moving {args.move:.1f} m towards the most open direction '
+                n.status(False, f'{reason}; no open direction to move to (best {clear:.1f} m) - '
+                                'move the robot to open space'); return 1
+            print(f'  {reason}: moving {args.move:.1f} m towards the most open direction '
                   f'({math.degrees(b):+.0f} deg, {clear:.1f} m clear) - ROBOT DRIVES', flush=True)
             if not (n.turn_by(b) and n.drive_forward(args.move)):
                 n.status(False, 'could not reach the next viewpoint (blocked)'); return 1
             n.spin_for(1.0)
 
-    if out is None or not out.get('ok'):
-        n.status(False, f'NOT localised: the room geometry stayed ambiguous after '
-                        f'{args.max_spots} viewpoints')
+    if accepted is None:
+        n.status(False, f'NOT localised after {args.max_spots} viewpoints: {reason}')
         return 1
-
+    out, ring, n_agree, n_vis = accepted
     x, y, th = out['pose']
     gl.save_debug_png(args.match_png, grid, ring, out['pose'])
     print(f'  picture of the match: {args.match_png}', flush=True)
-
-    # Final gate - WHOLE-ROOM evidence only.
-    # 1. The 360 deg ring must fit the map well at the matched pose.
-    if out['score'] < args.min_ring_score:
-        n.status(False, f'ring fits the map poorly (score {out["score"]:.2f} < '
-                        f'{args.min_ring_score}) - not trusting it'); return 1
-    # 2. Visual (RTAB-Map) closures made BEFORE the hint are independent
-    #    evidence. If there are any, they must agree; a disagreement is a real
-    #    conflict between two methods and nothing is mapped.
-    before = list(n.closure_poses)
-    agree = [c for c in before if math.hypot(c[1]-x, c[2]-y) <= 0.30
-             and abs(math.degrees(math.atan2(math.sin(c[3]-th), math.cos(c[3]-th)))) <= 10]
-    if before and not agree:
-        n.status(False, f'CONFLICT: {len(before)} visual closures disagree with the geometric pose '
-                        f'(nearest {min(math.hypot(c[1]-x, c[2]-y) for c in before):.2f} m) - '
-                        'not mapping'); return 1
-    # The single-view check is logged but does NOT gate here: on 2026-10-14 it
-    # called a pose wrong (1% near obstacles) that the 360 deg geometric match
-    # and three independent RTAB-Map closures agreed on within 12 cm - its view
-    # held only a chair and a person, with the fixed structure beyond its 2.5 m
-    # range. It still guards nav_goal.py, for a robot carried after startup.
+    agree, before = range(n_agree), range(n_vis)     # counts for the status line
 
     # Hand the geometric pose to RTAB-Map, then confirm it took it.
     n.hint(x, y, th)
