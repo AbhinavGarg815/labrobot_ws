@@ -996,6 +996,26 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Map v6 — fresh map (2026-10-27)
+
+Fresh teleop map after v4 went stale (19 days, room changed; Problem 44 test).
+`Kp/MaxFeatures` raised 500 -> 1000 (fixed at node creation; more words per
+place for relocalisation). An earlier attempt that day (v5, 1110 nodes) lost
+power before a clean save; integrity ok, kept as
+`docs/maps/backup/lab_v5_partial_20261027_1431.db`.
+v6: 1 session, 34.2 m, 1271 poses, 2112 links, 710 nodes after optimisation,
+188 loop closures + 329 proximity, final drift correction 1.69 m, largest
+single jump 441 mm, no suspect jumps. Clean save, integrity ok, 406 MB, backed
+up to `docs/maps/backup/lab_v6_20261027.db`.
+**TODO next session (user request):** discard the end of the session - a person
+standing there was mapped as an obstacle. Cut at "20 s before the robot
+stopped": keep nodes <= 1251 (t = -29 s; nothing between -29 s and -18 s, the
+robot was paused), drop 1252-1271, using
+`rtabmap-reprocess -stop 1251 lab_v6_20261027.db lab_v6_trimmed.db`, then check
+the person is gone from the grid. Not done now: battery low.
+Old v4 waypoints archived to `docs/maps/old_v4/` (different frame); re-save
+waypoints on v6.
+
 ### Problem 44 — auto_localise accepted a WRONG pose (2026-10-15)
 
 Cold start: spot 1 geometric (2.92, -0.25) ambiguous 82%, moved 0.6 m, spot 2

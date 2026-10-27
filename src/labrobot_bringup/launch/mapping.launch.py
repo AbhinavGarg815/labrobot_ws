@@ -144,6 +144,12 @@ def generate_launch_description():
         # 23 of 30 relocalisation candidates came back with exactly 0/20 inliers.
         # Re-extracted, the best near-misses rose from 12/20 to 18/20 (2026-10-13).
         'RGBD/LoopClosureReextractFeatures': s('true'),
+        # 1000 visual words stored per node, not the default 500. Fixed when a
+        # node is created, so it only takes effect for maps built after this
+        # change (the 2026-10-27 map onwards). Relocalisation after the room
+        # changes has been the weakest link: more words per place gives more
+        # chances to recognise it. Costs a larger database and a little CPU.
+        'Kp/MaxFeatures': s('1000'),
 
         # --- mapping vs localization ----------------------------------------
         # IncrementalMemory false stops new nodes being created: the robot
