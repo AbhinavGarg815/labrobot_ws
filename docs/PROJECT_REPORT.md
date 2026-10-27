@@ -1007,12 +1007,23 @@ v6: 1 session, 34.2 m, 1271 poses, 2112 links, 710 nodes after optimisation,
 188 loop closures + 329 proximity, final drift correction 1.69 m, largest
 single jump 441 mm, no suspect jumps. Clean save, integrity ok, 406 MB, backed
 up to `docs/maps/backup/lab_v6_20261027.db`.
-**TODO next session (user request):** discard the end of the session - a person
-standing there was mapped as an obstacle. Cut at "20 s before the robot
-stopped": keep nodes <= 1251 (t = -29 s; nothing between -29 s and -18 s, the
-robot was paused), drop 1252-1271, using
-`rtabmap-reprocess -stop 1251 lab_v6_20261027.db lab_v6_trimmed.db`, then check
-the person is gone from the grid. Not done now: battery low.
+**Cleanup (user request): remove a person mapped as an obstacle.**
+1. Trimmed the last 20 s: `rtabmap-reprocess -stop 1251` -> 1251 nodes, 344 loop
+   closures, integrity ok. But the person was STILL in the map - they had
+   been seen earlier too.
+2. Located the blob (isolated, 96% free around it): (0.15, -0.12), 0.45 x 0.40 m,
+   in the bottom-middle corridor - `docs/images/v6_person_blob.png`, confirmed
+   by the user's description.
+3. RTAB-Map assembles the 2D map from each node's own obstacle list, so the
+   person was removed AT THE SOURCE: 613 points in 18 nodes deleted from
+   Data.obstacle_cells inside the box + 10 cm, stored grid cleared and rebuilt.
+   Result: 70 occupied cells in the box -> 0, **0 cells changed outside it**.
+   Editing only the assembled grid would have been undone by the next rebuild.
+Active map: `docs/maps/backup/lab_v6_clean_20261027.db` (= ~/.ros/rtabmap.db).
+Originals kept: `lab_v6_20261027.db`, `lab_v6_trimmed.db`.
+Tool for next time: `tools/erase_from_map.py --box X0 X1 Y0 Y1 [--dry-run]`
+(stack stopped; backs up the DB first). Dry-run on the pre-edit map finds the
+same 613 points / 18 nodes; on the cleaned map, 0.
 Old v4 waypoints archived to `docs/maps/old_v4/` (different frame); re-save
 waypoints on v6.
 
