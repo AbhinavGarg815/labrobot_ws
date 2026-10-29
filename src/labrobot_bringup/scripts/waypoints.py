@@ -32,6 +32,7 @@ import sys
 import time
 
 import rclpy
+from rclpy.signals import SignalHandlerOptions
 import tf2_ros
 import yaml
 from action_msgs.msg import GoalStatus
@@ -200,8 +201,13 @@ def cmd_go(tool, args):
                 print('  mission TIMEOUT - cancelling'); h.cancel_goal_async()
                 rclpy.spin_once(tool, timeout_sec=1.0); return 1
     except KeyboardInterrupt:
-        print('  cancelled by user - stopping the robot'); h.cancel_goal_async()
-        rclpy.spin_once(tool, timeout_sec=1.0); return 130
+        print('  cancelled by user - stopping the robot', flush=True)
+        c = h.cancel_goal_async()
+        rclpy.spin_until_future_complete(tool, c, timeout_sec=5.0)
+        ok = c.result() is not None and len(c.result().goals_canceling) > 0
+        print('  mission cancelled' if ok else '  WARNING: cancel not confirmed - stop the robot manually',
+              flush=True)
+        return 130
     res = r.result()
     missed = list(res.result.missed_waypoints)
     status = {GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED', GoalStatus.STATUS_ABORTED: 'ABORTED',
@@ -240,12 +246,18 @@ def main():
     s.add_argument('--timeout', type=float, default=0.0, help='seconds; 0 = none')
     s.add_argument('--skip-localisation-check', action='store_true')
     args, _ = ap.parse_known_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
-    rclpy.init(); tool = Tool()
+    # No rclpy signal handler, so Ctrl-C does NOT shut the ROS context down
+    # before cmd_go can send its cancel: with the default handler the context
+    # was already gone, the cancel could not be sent, and stopping the robot
+    # depended on someone cancelling from outside (2026-10-27).
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO); tool = Tool()
     try:
         rc = {'save': cmd_save, 'pick': cmd_pick, 'add': cmd_add, 'list': cmd_list,
               'delete': cmd_delete, 'go': cmd_go}[args.cmd](tool, args)
+    except KeyboardInterrupt:
+        rc = 130
     finally:
-        tool.destroy_node(); rclpy.shutdown()
+        tool.destroy_node(); rclpy.try_shutdown()
     return rc
 
 

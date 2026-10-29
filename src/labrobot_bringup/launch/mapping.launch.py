@@ -150,6 +150,19 @@ def generate_launch_description():
         # changes has been the weakest link: more words per place gives more
         # chances to recognise it. Costs a larger database and a little CPU.
         'Kp/MaxFeatures': s('1000'),
+        # SURVIVE POWER CUTS. RTAB-Map's defaults are JournalMode 3 (MEMORY)
+        # and Synchronous 0 (OFF): the rollback journal lives in RAM and nothing
+        # is forced to disk. SQLite's own documentation says that combination
+        # will very likely corrupt the database if power is lost mid-
+        # transaction - and this robot runs on a battery that dies without
+        # warning. It happened: on 2026-10-27 a lifelong-mapping session lost
+        # power and the database read back "disk image is malformed" (the clean
+        # backup was restored). TRUNCATE keeps the journal ON DISK so an
+        # interrupted transaction is rolled back on next open; FULL makes every
+        # commit reach the disk before it counts. Cost: one fsync per node
+        # (~1 Hz), negligible here.
+        'DbSqlite3/JournalMode': s('1'),
+        'DbSqlite3/Synchronous': s('2'),
 
         # --- mapping vs localization ----------------------------------------
         # IncrementalMemory false stops new nodes being created: the robot

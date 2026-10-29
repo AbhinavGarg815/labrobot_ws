@@ -996,6 +996,22 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 45 — power cut corrupted the map database; RTAB-Map's SQLite defaults (2026-10-29)
+
+After a lifelong-mapping session on 10-27 lost power, `~/.ros/rtabmap.db`
+(grown 400 -> 598 MB) read "database disk image is malformed". Restored
+`lab_v6_clean_20261027.db` (only minutes of updates lost; corrupt copy kept).
+Cause: RTAB-Map's defaults `DbSqlite3/JournalMode 3` (MEMORY) and
+`DbSqlite3/Synchronous 0` (OFF) - journal in RAM, nothing forced to disk. SQLite
+documents that this combination will very likely corrupt the database on power
+loss mid-transaction. Fix in mapping.launch.py: JournalMode 1 (TRUNCATE,
+journal on disk, interrupted transactions roll back on next open) and
+Synchronous 2 (FULL, each commit on disk before it counts). Verified applied
+at startup ("Setting RTAB-Map parameter DbSqlite3/JournalMode=1 ...").
+Related: waypoints.py could not send its own cancel on Ctrl-C (the default rclpy
+signal handler shut the context first) - now handled like auto_localise and
+confirms the cancel or warns.
+
 ### Map v6 — fresh map (2026-10-27)
 
 Fresh teleop map after v4 went stale (19 days, room changed; Problem 44 test).
