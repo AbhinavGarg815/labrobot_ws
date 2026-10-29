@@ -996,6 +996,28 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### M5 — waypoint navigation WORKS (2026-10-29)
+
+Full chain on map v6: cold start -> auto_localise (spot 1: geometric distinct
+72%, 2/2 visual closures agree, single-view 100%) -> joined the saved map
+(link 1341 -> 528, pose held within 9 cm) -> lifelong mapping -> user-defined
+waypoints -> mission.
+
+- Waypoints were clicked by the user in Foxglove (`waypoints.py pick`,
+  topic /waypoint_pick). Foxglove published them in `base_link` (its display
+  frame); the first version rejected such clicks, losing the user's first
+  waypoint. Fixed: any frame is converted to map through TF.
+- `p2` was 16 cm from an obstacle (robot half-width 0.20 m): flagged before
+  driving, user chose the nearest spot with 0.35 m clearance (76 cm away).
+- **Mission p1 -> p2: SUCCEEDED, 2/2 waypoints reached in 228 s, final pose 7 cm
+  from p2** (goal tolerance 10 cm). Compare the first mission (2026-10-14): map
+  frame reset on switching to mapping, every leg failed.
+
+The track recording for this run was lost: a cleanup command's process filter
+matched its own command line again and interrupted the recorder before it
+wrote its file. Lesson repeated: stop processes by PID, never by a pattern the
+calling command also contains.
+
 ### Problem 45 — power cut corrupted the map database; RTAB-Map's SQLite defaults (2026-10-29)
 
 After a lifelong-mapping session on 10-27 lost power, `~/.ros/rtabmap.db`

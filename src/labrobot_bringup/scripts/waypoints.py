@@ -120,9 +120,24 @@ def cmd_pick(tool, args):
     if 'p' not in got:
         print('  nothing received on /waypoint_pick'); return 1
     m = got['p']
-    if m.header.frame_id not in ('map', ''):
-        print(f'  pose is in frame "{m.header.frame_id}" - set the Foxglove fixed frame to map'); return 1
-    return cmd_save(tool, args, picked=(m.pose.position.x, m.pose.position.y, yaw_of(m.pose.orientation)))
+    frame = m.header.frame_id or 'map'
+    x, y, yaw = m.pose.position.x, m.pose.position.y, yaw_of(m.pose.orientation)
+    if frame != 'map':
+        # Convert into the map frame with TF. Foxglove publishes in whatever
+        # frame its 3D panel displays (2026-10-29: base_link); refusing those
+        # clicks threw the user's waypoint away. The robot is localised, so
+        # frame -> map is known. Latest transform: the click is a place on the
+        # map display, not a measurement tied to its timestamp.
+        try:
+            tf = tool.buf.lookup_transform('map', frame, rclpy.time.Time(),
+                                           timeout=rclpy.duration.Duration(seconds=3.0))
+        except Exception as e:  # noqa: BLE001
+            print(f'  cannot convert the click from "{frame}" to map ({e})'); return 1
+        t = tf.transform.translation; th = yaw_of(tf.transform.rotation)
+        c, s_ = math.cos(th), math.sin(th)
+        x, y, yaw = t.x + c*x - s_*y, t.y + s_*x + c*y, th + yaw
+        print(f'  click was in "{frame}" - converted to map', flush=True)
+    return cmd_save(tool, args, picked=(x, y, yaw))
 
 
 def cmd_add(tool, args):
