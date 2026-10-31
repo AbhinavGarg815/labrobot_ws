@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <limits>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -146,6 +147,7 @@ hardware_interface::CallbackReturn RMCS2303SystemHardware::on_activate(
   have_seq_ = false;
   dropped_frames_ = 0;
   status_frames_ = 0;
+  write_failures_ = 0;
 
   if (!send_simple_command(labrobot::protocol::kCmdStop)) {
     RCLCPP_FATAL(logger(), "cannot write to %s", serial_device_.c_str());
@@ -332,7 +334,7 @@ hardware_interface::return_type RMCS2303SystemHardware::read(
 }
 
 hardware_interface::return_type RMCS2303SystemHardware::write(
-  const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
+  const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
 {
   // Do not command motion before the firmware has been heard from: without a
   // status frame we cannot tell a healthy drive from an absent one.
@@ -353,10 +355,37 @@ hardware_interface::return_type RMCS2303SystemHardware::write(
   labrobot::protocol::VelocityCommand cmd{mrad[kLeft], mrad[kRight]};
   uint8_t frame[labrobot::protocol::kMaxFrame];
   const size_t n = labrobot::protocol::encodeVelocity(cmd, frame, sizeof(frame));
-  if (n == 0 || !port_.write(frame, n)) {
-    RCLCPP_ERROR_THROTTLE(
-      logger(), throttle_clock_, 1000, "serial write failed");
+  if (n == 0) {
+    RCLCPP_ERROR(logger(), "could not encode the velocity frame");
     return hardware_interface::return_type::ERROR;
+  }
+  if (!port_.write(frame, n)) {
+    // Returning ERROR makes ros2_control deactivate this hardware for the rest
+    // of the run. On 2026-10-31 ONE failed write, while status frames were
+    // still arriving at 50 Hz, left the robot unable to move until a full
+    // restart. So skip this frame - the next cycle sends a fresh command, and
+    // the firmware watchdog brakes if commands really stop - and give up only
+    // when writes keep failing as long as read() tolerates a silent MCU.
+    if (write_failures_ == 0) {
+      first_write_failure_ = time;
+    }
+    ++write_failures_;
+    const int err = port_.last_errno();
+    RCLCPP_WARN_THROTTLE(
+      logger(), throttle_clock_, 1000, "serial write failed (%s), %u frame(s) in a row",
+      err ? std::strerror(err) : "port not open", write_failures_);
+    if ((time - first_write_failure_).seconds() > status_timeout_s_) {
+      RCLCPP_ERROR(
+        logger(), "serial writes failing for %.2f s (%s) - link to the MCU appears dead",
+        (time - first_write_failure_).seconds(), err ? std::strerror(err) : "port not open");
+      return hardware_interface::return_type::ERROR;
+    }
+    return hardware_interface::return_type::OK;
+  }
+  if (write_failures_ > 0) {
+    RCLCPP_INFO(
+      logger(), "serial write recovered after %u failed frame(s)", write_failures_);
+    write_failures_ = 0;
   }
 
   return hardware_interface::return_type::OK;

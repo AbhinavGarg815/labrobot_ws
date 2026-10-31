@@ -121,6 +121,9 @@ private:
   bool have_seq_ = false;
   uint32_t dropped_frames_ = 0;
   uint32_t status_frames_ = 0;
+  // Consecutive failed command writes, and when the run of failures began.
+  uint32_t write_failures_ = 0;
+  rclcpp::Time first_write_failure_{0, 0, RCL_ROS_TIME};
   // Snapshot at the last health report, so the log can show drops SINCE then.
   // A cumulative percentage is dominated by the startup burst and would hide a
   // link that started failing an hour into a mission.

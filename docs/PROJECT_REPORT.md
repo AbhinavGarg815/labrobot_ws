@@ -996,6 +996,47 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 48 — one failed serial write disabled the drive for the whole run (2026-10-31)
+
+During auto-localisation after a kidnap, the robot turned and drove fine to
+spot 3, then at 21:39:59 - the moment it started the drive to spot 4 - the
+hardware plugin logged one `serial write failed` and the robot never moved
+again: the next 360 deg Spin ran its full 240 s at 0 deg, and
+`ros2 control list_hardware_components` showed the system **unconfigured**.
+Cause: `write()` returned ERROR on any failed write, and ros2_control
+(Humble) deactivates hardware that returns ERROR - permanently, until restart.
+Status frames were still arriving at 50 Hz (499 per 10 s, 0% dropped,
+21:39:52), so the MCU was alive: a transient failure. The errno was not logged
+(`SerialPort::write` discarded it), so the exact cause is unknown; no USB
+disconnect in the kernel log.
+Fix (labrobot_hardware):
+- `SerialPort::last_errno()` keeps the errno of a failed write; it is logged.
+- A failed write now skips that frame and returns OK; the next cycle sends a
+  fresh command, and the firmware watchdog brakes if commands really stop.
+  ERROR only after writes keep failing longer than `status_timeout_ms`
+  (500 ms) - the same tolerance read() gives a silent MCU. A recovery is logged.
+Test (pty, master never read): 2091 frames accepted, then errno 11 EAGAIN;
+after draining, writes succeed again; a closed port reports errno 0.
+Watch item: the next "serial write failed (...)" line names the errno.
+
+### M3.T7 — operator-confirmed localisation (2026-10-31)
+
+Kidnap (robot moved while charging): the ring match was ambiguous at 3 spots
+(runner-up 88-91%), each time pointing at the upper-left corridor (-1.3, 5.0),
+while 31 visual closures from many sessions (nodes 54-58, 240, 286, 2269-2353)
+agreed on one correction (0.21-0.28, 0.06-0.17, 105-108 deg) placing the robot
+near (0.2, 0.2). The single-view check passed there (11% far-in-free, 90% near
+obstacles) and the **user confirmed** that pose on the real robot ("a little
+forward"). The two-method rule correctly refused - but had no way out.
+`auto_localise.py --accept-current`: a person's confirmation replaces the ring
+match; still required: >= --min-closures visual closures agreeing with the
+current map->odom (0.3 m / 10 deg) AND the single-view check OK. It turns
+slowly in place only until the closures arrive (none came in 60 s standing
+still - RTAB-Map adds no views without motion). First try refused correctly:
+0 closures, because the drive was dead (Problem 48).
+Open: why the ring match fails here - this is the first time geometry, not
+appearance, was the wrong method.
+
 ### Power lost while a mission waited for "go" (2026-10-31, ~17:03)
 
 The Jetson went down without a clean stop (most likely the battery) while

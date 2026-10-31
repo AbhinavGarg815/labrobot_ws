@@ -41,6 +41,19 @@ viewpoints, was accepted alone and was WRONG - a same-shaped part of the lab.
 Both localisations the user verified had agreeing visual closures.
 Every attempt's ring, verdict and picture is kept in docs/logs/autoloc/.
 
+Operator-confirmed fallback (--accept-current)
+----------------------------------------------
+    ros2 run labrobot_bringup auto_localise.py --accept-current --then-mapping --saved-below ID
+For when a PERSON has checked that the pose RTAB-Map shows matches the real
+robot, but the automatic rule could not accept it. No ring match, no driving,
+no thresholds lowered; it turns in place only until fresh views arrive: the person's confirmation replaces the geometric match, and two
+machine checks must still pass - at least --min-closures visual closures to the
+saved map agreeing with the current map->odom (0.3 m / 10 deg), and the
+single-view check (localisation_check) OK. 2026-10-31: after a kidnap the ring
+match was ambiguous at 3 spots (88-91%) and pointed at a corridor 5 m away,
+while 31 visual closures from many sessions agreed with each other, the view
+check passed, and the user confirmed that pose on the real robot.
+
 Why localisation mode first, then mapping (--then-mapping)
 ---------------------------------------------------------
 Tried 2026-10-13: running in SLAM mode from the start, RTAB-Map's best
@@ -357,6 +370,12 @@ class AutoLocalise(Node):
                 rclpy.spin_until_future_complete(self, f, timeout_sec=5.0)
 
 
+def same_correction(c1, c2):
+    """Two map->odom corrections (x, y, yaw) describe the same localisation."""
+    return (math.hypot(c1[0]-c2[0], c1[1]-c2[1]) <= 0.30 and
+            abs(math.degrees(math.atan2(math.sin(c1[2]-c2[2]), math.cos(c1[2]-c2[2])))) <= 10)
+
+
 def most_open_bearing(ring, half_width=0.30, step_deg=10):
     """Bearing (rad, robot frame) with the longest clear corridor of robot
     width, from the ring the spin just produced. Returns (bearing, clear_m)."""
@@ -427,6 +446,10 @@ def main():
                     help='after localising, switch RTAB-Map to mapping mode so the map keeps '
                          'updating during navigation (lifelong SLAM). Start RTAB-Map in '
                          'localisation mode for this - see the module docstring.')
+    ap.add_argument('--accept-current', action='store_true',
+                    help='OPERATOR-CONFIRMED: a person has checked the pose RTAB-Map shows. '
+                         'Accept it without spinning if visual closures agree with it and the '
+                         'single-view check passes (see the module docstring)')
     ap.add_argument('--once', action='store_true',
                     help='exit after deciding. By default the node stays up so its latched '
                          'status survives - latched messages vanish with their publisher.')
@@ -489,6 +512,8 @@ def _run(n, args):
     grid = gl.get_map(n, timeout=30)
     if grid is None:
         n.status(False, 'no /map from RTAB-Map - is it running?'); return 1
+    if args.accept_current:
+        return accept_current(n, args)
     col = gl.RingCollector(n, n.buf)
     n.spin_for(2.0)
 
@@ -503,10 +528,6 @@ def _run(n, args):
         x, y, th = pose
         cth = th - oth; c, s_ = math.cos(cth), math.sin(cth)
         return x - (c*ox - s_*oy), y - (s_*ox + c*oy), cth
-
-    def same(c1, c2):
-        return (math.hypot(c1[0]-c2[0], c1[1]-c2[1]) <= 0.30 and
-                abs(math.degrees(math.atan2(math.sin(c1[2]-c2[2]), math.cos(c1[2]-c2[2])))) <= 10)
 
     accepted = None; ring = None; out = None; reason = ''
     for spot in range(args.max_spots):
@@ -530,7 +551,7 @@ def _run(n, args):
             x, y, th = out['pose']
             geo = correction_for(out['pose'])
             vis = [(c[1], c[2], c[3]) for c in n.corrections]
-            agree = [v for v in vis if same(v, geo)]
+            agree = [v for v in vis if same_correction(v, geo)]
             print(f'  spot {spot + 1}: {len(ring)} beams, best x={x:+.2f} y={y:+.2f} '
                   f'yaw={math.degrees(th):+.0f}, runner-up {out["ratio"]:.0%} '
                   f'({"distinct" if out["ok"] else "ambiguous"}), ring score {out["score"]:.2f}; '
@@ -586,7 +607,50 @@ def _run(n, args):
         return 1
     r = localisation_check.check(n, n.buf)
     print(f'  single-view check (logged, not gating): {r["verdict"]} - {r["why"]}', flush=True)
+    return go_live(n, args, x, y, th,
+                   f'geometric match x={x:+.2f} y={y:+.2f} yaw={math.degrees(th):+.0f} deg '
+                   f'(runner-up {out["ratio"]:.0%}, ring score {out["score"]:.2f}); '
+                   f'{len(agree)}/{len(before)} independent visual closures agree; RTAB-Map adopted it')
 
+
+def accept_current(n, args):
+    """Operator-confirmed: accept RTAB-Map's current pose if appearance and the
+    current view both support it. See the module docstring."""
+    # RTAB-Map adds no new views while the robot stands still (0 closures in
+    # 60 s, 2026-10-31), so turn slowly - the same collision-checked Spin as
+    # the automatic path - only until enough agreeing closures have arrived.
+    n.status(False, 'operator-confirmed pose: turning slowly for fresh views of the saved map')
+    n.spin_for(2.0)
+    if len(n.agreeing(0.30, 10.0)) < args.min_closures:
+        n.spin_continuous(360.0, 240, lambda _d: len(n.agreeing(0.30, 10.0)) >= args.min_closures)
+    n.spin_for(2.0)
+    try:
+        mo = n.buf.lookup_transform('map', 'odom', rclpy.time.Time())
+        x, y, th = n.map_pose()
+    except Exception:  # noqa: BLE001
+        n.status(False, 'operator-confirmed pose: no map->odom from RTAB-Map'); return 1
+    cur = (mo.transform.translation.x, mo.transform.translation.y, yaw_of(mo.transform.rotation))
+    vis = [(c[1], c[2], c[3]) for c in n.corrections]
+    agree = [v for v in vis if same_correction(v, cur)]
+    print(f'  current map->odom x={cur[0]:+.2f} y={cur[1]:+.2f} yaw={math.degrees(cur[2]):+.1f}; '
+          f'visual closures {len(agree)}/{len(vis)} agree', flush=True)
+    if len(agree) < args.min_closures:
+        n.status(False, f'operator-confirmed pose NOT accepted: only {len(agree)}/{len(vis)} visual '
+                        f'closures over one turn agree (need {args.min_closures})')
+        return 1
+    r = localisation_check.check(n, n.buf)
+    print(f'  single-view check: {r["verdict"]} - {r["why"]}', flush=True)
+    if r['verdict'] != 'OK':
+        n.status(False, f'operator-confirmed pose NOT accepted: view does not match the map ({r["why"]})')
+        return 1
+    return go_live(n, args, x, y, th,
+                   f'OPERATOR-CONFIRMED x={x:+.2f} y={y:+.2f} yaw={math.degrees(th):+.0f} deg; '
+                   f'{len(agree)}/{len(vis)} visual closures agree; view check {r["why"]}')
+
+
+def go_live(n, args, x, y, th, how):
+    """After a pose is accepted: clear costmaps, map strictly, and (with
+    --then-mapping) join the saved map; then publish localised."""
     n.clear_costmaps()
     n.set_rtabmap_param('Vis/MinInliers', args.map_min_inliers)    # strict before mapping
     mode = 'localisation (map frozen)'
@@ -604,10 +668,7 @@ def _run(n, args):
             print(f'  WARNING: could not join the saved map ({why}) - returning to '
                   'localisation mode, map frozen', flush=True)
             n.set_localisation_mode(); n.spin_for(1.0); n.hint(x, y, th); n.spin_for(3.0)
-    n.status(True, f'geometric match x={x:+.2f} y={y:+.2f} yaw={math.degrees(th):+.0f} deg '
-                   f'(runner-up {out["ratio"]:.0%}, ring score {out["score"]:.2f}); '
-                   f'{len(agree)}/{len(before)} independent visual closures agree; RTAB-Map adopted it; '
-                   f'mode: {mode}')
+    n.status(True, f'{how}; mode: {mode}')
     return 0
 
 if __name__ == '__main__':

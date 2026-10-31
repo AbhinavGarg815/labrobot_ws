@@ -29,8 +29,10 @@ public:
   // nothing is pending, or -1 on a real error (EAGAIN is reported as 0).
   int read(uint8_t * buffer, size_t max);
 
-  // Writes `len` bytes. Returns true only if all of them were accepted.
+  // Writes `len` bytes. Returns true only if all of them were accepted; on
+  // false, last_errno() says why (0 if the port is not open).
   bool write(const uint8_t * data, size_t len);
+  int last_errno() const { return last_errno_; }
 
   // Discards buffered input, so a restart never acts on frames queued while the
   // controller was inactive.
@@ -38,6 +40,7 @@ public:
 
 private:
   int fd_ = -1;
+  int last_errno_ = 0;
 };
 
 }  // namespace labrobot_hardware

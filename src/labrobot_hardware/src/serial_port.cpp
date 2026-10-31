@@ -102,6 +102,7 @@ int SerialPort::read(uint8_t * buffer, size_t max)
 
 bool SerialPort::write(const uint8_t * data, size_t len)
 {
+  last_errno_ = 0;
   if (fd_ < 0) {
     return false;
   }
@@ -109,10 +110,11 @@ bool SerialPort::write(const uint8_t * data, size_t len)
   while (written < len) {
     const ssize_t n = ::write(fd_, data + written, len - written);
     if (n < 0) {
-      // The kernel buffer is momentarily full. Our frames are 10 bytes against
-      // a 4 KB buffer, so this effectively cannot happen; report it rather than
-      // spin, because spinning here would stall the whole controller loop.
-      return errno == EAGAIN || errno == EWOULDBLOCK ? false : false;
+      // Never retry here: spinning would stall the whole controller loop. The
+      // caller decides whether a failure is transient (see write() in
+      // rmcs2303_system.cpp).
+      last_errno_ = errno;
+      return false;
     }
     written += static_cast<size_t>(n);
   }
