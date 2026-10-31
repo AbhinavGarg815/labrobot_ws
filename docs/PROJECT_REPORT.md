@@ -996,6 +996,24 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 46 — map logically inconsistent after an unclean power-off (2026-10-31)
+
+After the 10-29 mission (lifelong mapping on), the robot was switched off
+without a clean stop. SQLite integrity was fine (the DbSqlite3 fix held), but
+RTAB-Map refused to load: `loadWordsQuery() Query (445239) doesn't match loaded
+words (356548)` then FATAL `Memory.cpp:526 loadDataFromDb() descriptors empty`.
+RTAB-Map writes part of its state (the vocabulary) only on a clean close, so an
+unclean stop leaves nodes referencing words that were never saved.
+Fixed with `rtabmap-recovery` on a copy (2450 nodes, 2 sessions, ~16 min):
+loads, publishes the full map (226x227, 19348 occupied cells), closes cleanly.
+Active: `docs/maps/backup/lab_v6_recovered_20261031.db`; the inconsistent
+original is kept as `inconsistent_v6_20261029.db`.
+Prevention:
+- `scripts/stop_robot.sh` now saves `~/.ros/rtabmap.db.lastclean` after every
+  clean RTAB-Map close - always a copy that loads.
+- `scripts/shutdown_robot.sh`: clean stop + sync + poweroff in one command.
+  **Use it instead of pulling the battery.**
+
 ### M5 — waypoint navigation WORKS (2026-10-29)
 
 Full chain on map v6: cold start -> auto_localise (spot 1: geometric distinct

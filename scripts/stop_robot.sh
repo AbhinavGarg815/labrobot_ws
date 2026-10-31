@@ -155,6 +155,16 @@ if [ "$rtabmap_was_running" -eq 1 ]; then
         echo "           'missing some words' and run rtabmap-recovery if you see it."
     else
         echo "  rtabmap closed its database cleanly after ${waited}s"
+        # Keep a copy of the map as it was at this CLEAN close. If the robot is
+        # later switched off mid-session, RTAB-Map's database can be left
+        # logically inconsistent (2026-10-31: "Query (445239) doesn't match
+        # loaded words (356548)" - the vocabulary is only fully written on a
+        # clean close) and refuse to load. This copy always loads.
+        DB="$HOME/.ros/rtabmap.db"
+        if [ -f "$DB" ]; then
+            cp "$DB" "$DB.lastclean.tmp" && mv "$DB.lastclean.tmp" "$DB.lastclean" && sync \
+                && echo "  known-good copy saved: $DB.lastclean"
+        fi
     fi
 fi
 
