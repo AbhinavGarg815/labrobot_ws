@@ -14,10 +14,11 @@ Waypoints live in docs/maps/waypoints.yaml (tracked in git, small). They are
 map-frame poses, so they belong to the map they were saved in: after a fresh
 map (not after lifelong-SLAM updates, which keep the frame) re-save them.
 
-`go` uses Nav2's FollowWaypoints action (waypoint_follower): one NavigateToPose
-per waypoint, a 2 s pause at each (wait_at_waypoint), and stop_on_failure:
-false - a waypoint blocked by a chair is reported as missed and the mission
-continues. It refuses to start unless the shared gate (nav_gate.py) passes:
+`go` sends one NavigateToPose per waypoint, with a 2 s pause at each. Just
+before each leg the waypoint is checked on the LIVE costmap: if something now
+blocks it, the robot goes to the nearest reachable spot within 0.5 m
+(APPROACHED) instead; if there is none, the waypoint is skipped (BLOCKED) and
+the mission continues. It refuses to start unless the shared gate (nav_gate.py) passes:
 startup localisation confirmed and the current view matches the map.
 
 `pick` saves a pose clicked in Foxglove without driving there: in a 3D panel,
@@ -31,15 +32,18 @@ import os
 import sys
 import time
 
+import numpy as np
 import rclpy
 from rclpy.signals import SignalHandlerOptions
 import tf2_ros
 import yaml
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import FollowWaypoints
+from nav2_msgs.action import NavigateToPose
+from nav2_msgs.msg import Costmap
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 FILE = os.environ.get('LABROBOT_WAYPOINTS',
                       os.path.expanduser('~/ros2_ws/docs/maps/waypoints.yaml'))
@@ -164,7 +168,57 @@ def cmd_delete(tool, args):
     print(f'  deleted "{args.name}"'); return 0
 
 
+LETHAL = 253          # costmap: the robot CENTRE may not be on cells >= this
+MAX_SHIFT_M = 0.50    # how far a blocked waypoint may be moved (user decision)
+
+
+def feasible_target(costmap, robot_xy, x, y, max_shift=MAX_SHIFT_M):
+    """Where to actually send the robot for waypoint (x, y), judged on the LIVE
+    global costmap: (tx, ty, shift_m), or None if nothing usable is within
+    max_shift.
+
+    The waypoint itself if the robot centre may stand there and it is connected
+    to the robot's free region; otherwise the nearest such cell within
+    max_shift. Connectivity matters: on 2026-10-31 an obstacle placed on r2 left
+    it cost 254 AND cut off from the robot's region, and the planner (correctly)
+    found no path - the old mission could only skip it.
+    """
+    from scipy.ndimage import label
+    md = costmap.metadata
+    W, H, res = md.size_x, md.size_y, md.resolution
+    ox, oy = md.origin.position.x, md.origin.position.y
+    C = np.asarray(costmap.data, np.uint16).reshape(H, W)
+    free = C < LETHAL
+    lab, _ = label(free)
+    rj, ri = int((robot_xy[1] - oy) / res), int((robot_xy[0] - ox) / res)
+    if not (0 <= ri < W and 0 <= rj < H) or lab[rj, ri] == 0:
+        return x, y, 0.0              # robot cell itself unknown here: let Nav2 judge
+    reach = lab == lab[rj, ri]
+    gj, gi = int((y - oy) / res), int((x - ox) / res)
+    if 0 <= gi < W and 0 <= gj < H and reach[gj, gi]:
+        return x, y, 0.0
+    r = int(math.ceil(max_shift / res))
+    j0, j1, i0, i1 = max(gj - r, 0), min(gj + r + 1, H), max(gi - r, 0), min(gi + r + 1, W)
+    if j0 >= j1 or i0 >= i1:
+        return None
+    jj, ii = np.mgrid[j0:j1, i0:i1]
+    cx, cy = ox + (ii + 0.5) * res, oy + (jj + 0.5) * res
+    d = np.hypot(cx - x, cy - y)
+    ok = reach[j0:j1, i0:i1] & (d <= max_shift)
+    if not ok.any():
+        return None
+    # nearest, and among near-equal ones the lowest cost (further from obstacles)
+    score = np.where(ok, d + 0.002 * C[j0:j1, i0:i1], np.inf)
+    k = np.unravel_index(np.argmin(score), score.shape)
+    return float(cx[k]), float(cy[k]), float(d[k])
+
+
 def cmd_go(tool, args):
+    """Drive the waypoints ONE AT A TIME (one NavigateToPose each), re-checking
+    each against the live costmap just before its leg, so a waypoint blocked
+    since it was saved - or during the mission - is approached to the nearest
+    reachable spot within 0.5 m instead of skipped. (Nav2's FollowWaypoints,
+    used before, takes the whole list up front and cannot do that.)"""
     wps = load()
     missing = [n for n in args.names if n not in wps]
     if missing:
@@ -182,61 +236,79 @@ def cmd_go(tool, args):
             print('  no current pose to return to'); return 1
         route.append(('start', *start))
     route = route * args.loop
-    client = ActionClient(tool, FollowWaypoints, 'follow_waypoints')
+
+    cm = {}
+    tool.create_subscription(Costmap, '/global_costmap/costmap_raw', lambda m: cm.__setitem__('c', m),
+                             QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                                        durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    client = ActionClient(tool, NavigateToPose, 'navigate_to_pose')
     if not client.wait_for_server(timeout_sec=15):
-        print('  follow_waypoints not available - is navigation.launch.py running?'); return 1
+        print('  navigate_to_pose not available - is navigation.launch.py running?'); return 1
+    t_mission = time.time()
+    while 'c' not in cm and time.time() - t_mission < 10:
+        rclpy.spin_once(tool, timeout_sec=0.1)
+    print(f'  mission: {" -> ".join(r[0] for r in route)}  ({len(route)} waypoints) - ROBOT WILL MOVE',
+          flush=True)
 
-    goal = FollowWaypoints.Goal()
-    goal.poses = [pose_msg(tool, x, y, yaw) for _, x, y, yaw in route]
-    names = [r[0] for r in route]
-    print(f'  mission: {" -> ".join(names)}  ({len(route)} waypoints) - ROBOT WILL MOVE', flush=True)
-    state = {'cur': -1, 't': time.time(), 'arrive': {}}
+    results = []
+    for k, (name, x, y, yaw) in enumerate(route):
+        outcome = None
+        for attempt in (1, 2):                 # second try only after a failed leg
+            for _ in range(5):
+                rclpy.spin_once(tool, timeout_sec=0.05)   # freshest costmap
+            here = tool.robot_pose(timeout=3.0)
+            tgt = (feasible_target(cm['c'], here[:2], x, y)
+                   if ('c' in cm and here) else (x, y, 0.0))
+            if tgt is None:
+                outcome = ('BLOCKED', f'no reachable spot within {MAX_SHIFT_M:.1f} m - skipped')
+                break
+            tx, ty, shift = tgt
+            note = '' if shift == 0 else f' (blocked - approaching {shift*100:.0f} cm away)'
+            print(f'  [{time.time()-t_mission:6.1f}s] {k+1}/{len(route)} {name}{note}'
+                  + (' - retry' if attempt == 2 else ''), flush=True)
+            goal = NavigateToPose.Goal(); goal.pose = pose_msg(tool, tx, ty, yaw)
+            f = client.send_goal_async(goal)
+            rclpy.spin_until_future_complete(tool, f, timeout_sec=15)
+            h = f.result()
+            if h is None or not h.accepted:
+                outcome = ('FAILED', 'goal rejected'); continue
+            r = h.get_result_async()
+            try:
+                while not r.done():
+                    rclpy.spin_once(tool, timeout_sec=0.1)
+                    if args.timeout and time.time() - t_mission > args.timeout:
+                        print('  mission TIMEOUT - cancelling', flush=True)
+                        c = h.cancel_goal_async(); rclpy.spin_until_future_complete(tool, c, timeout_sec=5)
+                        return 1
+            except KeyboardInterrupt:
+                print('  cancelled by user - stopping the robot', flush=True)
+                c = h.cancel_goal_async()
+                rclpy.spin_until_future_complete(tool, c, timeout_sec=5.0)
+                ok = c.result() is not None and len(c.result().goals_canceling) > 0
+                print('  mission cancelled' if ok else
+                      '  WARNING: cancel not confirmed - stop the robot manually', flush=True)
+                return 130
+            if r.result().status == GoalStatus.STATUS_SUCCEEDED:
+                end = tool.robot_pose(timeout=2.0)
+                err = math.hypot(end[0]-x, end[1]-y) if end else float('nan')
+                outcome = (('APPROACHED' if shift else 'REACHED'),
+                           f'{err*100:.0f} cm from {name}' + (f' (blocked; target moved {shift*100:.0f} cm)'
+                                                              if shift else ''))
+                break
+            outcome = ('FAILED', f'navigation status {r.result().status}')
+        results.append((name, *outcome))
+        print(f'           -> {outcome[0]}: {outcome[1]}', flush=True)
+        if k + 1 < len(route):
+            t_pause = time.time()
+            while time.time() - t_pause < 2.0:     # settle, and still frames for RTAB-Map
+                rclpy.spin_once(tool, timeout_sec=0.1)
 
-    def on_fb(m):
-        i = m.feedback.current_waypoint
-        if i != state['cur']:
-            if state['cur'] >= 0:
-                state['arrive'][state['cur']] = time.time()
-            state['cur'] = i
-            if i < len(names):
-                print(f'  [{time.time()-state["t"]:6.1f}s] heading to {i+1}/{len(names)}: {names[i]}',
-                      flush=True)
-
-    t0 = time.time()
-    f = client.send_goal_async(goal, feedback_callback=on_fb)
-    rclpy.spin_until_future_complete(tool, f, timeout_sec=15)
-    h = f.result()
-    if h is None or not h.accepted:
-        print('  mission rejected by the waypoint follower'); return 1
-    r = h.get_result_async()
-    try:
-        while not r.done():
-            rclpy.spin_once(tool, timeout_sec=0.1)
-            if args.timeout and time.time() - t0 > args.timeout:
-                print('  mission TIMEOUT - cancelling'); h.cancel_goal_async()
-                rclpy.spin_once(tool, timeout_sec=1.0); return 1
-    except KeyboardInterrupt:
-        print('  cancelled by user - stopping the robot', flush=True)
-        c = h.cancel_goal_async()
-        rclpy.spin_until_future_complete(tool, c, timeout_sec=5.0)
-        ok = c.result() is not None and len(c.result().goals_canceling) > 0
-        print('  mission cancelled' if ok else '  WARNING: cancel not confirmed - stop the robot manually',
-              flush=True)
-        return 130
-    res = r.result()
-    missed = list(res.result.missed_waypoints)
-    status = {GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED', GoalStatus.STATUS_ABORTED: 'ABORTED',
-              GoalStatus.STATUS_CANCELED: 'CANCELED'}.get(res.status, str(res.status))
-    print(f'\n  mission {status} after {time.time()-t0:.0f} s: '
-          f'{len(route)-len(missed)}/{len(route)} waypoints reached')
-    for i in missed:
-        print(f'    MISSED {i+1}: {names[i]}')
-    end = tool.robot_pose(timeout=3.0)
-    if end:
-        _, gx, gy, _ = route[-1]
-        print(f'  final pose x={end[0]:+.2f} y={end[1]:+.2f}, {math.hypot(end[0]-gx, end[1]-gy)*100:.0f} cm '
-              f'from the last waypoint ({names[-1]})')
-    return 0 if status == 'SUCCEEDED' and not missed else 1
+    n_ok = sum(1 for r in results if r[1] in ('REACHED', 'APPROACHED'))
+    print(f'\n  mission finished after {time.time()-t_mission:.0f} s: {n_ok}/{len(results)} waypoints '
+          f'reached or approached')
+    for name, kind, detail in results:
+        print(f'    {name:8s} {kind:10s} {detail}')
+    return 0 if n_ok == len(results) else 1
 
 
 def main():
