@@ -1920,6 +1920,9 @@ Bluetooth hci0). It joins the "Galaxy" hotspot automatically (autoconnect yes;
 10.58.238.11 at first connection, -42 dBm, 130 Mbit/s on 2.4 GHz). Reach it by
 name - `ssh zine@ubuntu.local` (avahi/mDNS) - since hotspot addresses change.
 The USB-tethered phone is no longer needed for the network.
+Tailscale removed from the Jetson on 2026-10-31 (`systemctl disable --now
+tailscaled`, `apt-get remove tailscale`) after SSH over the hotspot Wi-Fi was
+verified (session from 10.58.238.66). Log: `~/tailscale_removal.log`.
 
 Chosen over the alternatives because RViz needs either X forwarding (unusable
 over SSH) or a matching `ROS_DOMAIN_ID`, and the latter means DDS discovery plus
