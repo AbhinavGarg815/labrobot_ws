@@ -996,6 +996,23 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### M5.T3 — blocked waypoint: approach within 0.5 m (2026-10-31, user limit)
+
+`waypoints.py go` now sends one NavigateToPose per waypoint (not
+FollowWaypoints) and, just before each leg, checks the waypoint against the
+live `/global_costmap/costmap_raw`:
+- waypoint free (cost < 253) and in the robot's connected free region -> go
+  there unchanged (**REACHED**);
+- covered or cut off -> nearest cell of the robot's free region within
+  **0.5 m** (user: "0.5m is right limit"), ties broken toward low cost
+  (**APPROACHED**, distance reported);
+- nothing reachable within 0.5 m -> **BLOCKED**, mission continues;
+- a failed leg is re-checked against a fresh costmap and retried once (**FAILED**
+  after that). Ctrl-C still cancels the active goal.
+Offline test on synthetic costmaps: free -> moved 0 cm; on a box -> 23 cm;
+0.1 m behind a wall -> near side, 23 cm; 1.0 m behind a wall -> skipped.
+Hardware test: pending (new user waypoints s1...).
+
 ### M5.T2 — mission r1 -> r2 -> r3 rerun: r2 blocked by a real obstacle (2026-10-31)
 
 With `default_server_timeout: 200` the r2 leg no longer timed out (55 s of
