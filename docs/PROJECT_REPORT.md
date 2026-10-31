@@ -996,6 +996,28 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Session end 2026-10-31 (22:18) — state and next steps
+
+- Drive fix (Problem 48) held: second bringup drove spot 1 -> spot 2 with the
+  link at 0% dropped and no write failures.
+- Auto-localisation again ambiguous at spot 1 (corridor (-1.28, 4.90), runner-up
+  85%); visual closures again consistent (nodes 56/57/59/261/2269, map->odom
+  0.24-0.25, 0.25-0.32, 116 deg). Spot-2 Spin aborted "Collision Ahead" at
+  132 deg: the local costmap showed the footprint in collision (lethal 26-33 cm
+  ahead) while the live depth view had **nothing within 0.8 m** and the user
+  confirmed nothing within 40 cm. Clearing both costmaps fixed it (footprint
+  cost 0, nearest lethal 98 cm). Stale obstacles: marked earlier, no longer
+  in view to be cleared. Candidate fix: clear the local costmap after each
+  auto_localise spot move/abort before turning again.
+- Last RTAB-Map pose (not accepted, not user-confirmed): (+0.85, +0.17, 127 deg).
+- Map closed cleanly, `.lastclean` saved 22:18.
+Next session:
+1. Bringup; if auto_localise is ambiguous, user confirms the pose in Foxglove,
+   then `auto_localise.py --accept-current --then-mapping --saved-below <ID>`
+   (kill the finished auto_localise first - a failed run stays up, latching false).
+2. Mission `waypoints.py go s1 s2 s3 s4 --wait-start`; user presses "go".
+3. Investigate why the ring match fails around (0.2, 0.2)-(0.9, 0.2).
+
 ### Problem 48 — one failed serial write disabled the drive for the whole run (2026-10-31)
 
 During auto-localisation after a kidnap, the robot turned and drove fine to
