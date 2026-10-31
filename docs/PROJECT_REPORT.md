@@ -996,6 +996,31 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 47 — a waypoint abandoned in 23 s; Nav2 hung after a partial restart (2026-10-31)
+
+User mission r1 -> r2 -> r3 (clicked in Foxglove): r1 and r3 reached, **r2 MISSED
+after ~23 s** (a 3 m leg takes ~60 s). The behaviour tree had failed to get an
+ACKNOWLEDGEMENT from follow_path, then spin, then wait - "Timed out while
+waiting for action server to acknowledge goal request" - within
+`default_server_timeout: 20` ms (Nav2's default). The Jetson was busy: in
+mapping mode each map growth resizes and reloads the global costmap
+(219x229 -> 219x231 in the log), and the point cloud stalled > 1 s.
+Fix: `default_server_timeout: 200`.
+
+Restarting Nav2 alone afterwards then hung at "Configuring controller_server"
+for > 3 min with 30% CPU idle and no duplicate nodes. 29 stale Fast DDS
+shared-memory files had built up in /dev/shm over many partial restarts (the
+`open_and_lock_file failed` errors seen earlier). Full clean stop, files
+removed with no ROS process running, full restart: Nav2 active normally.
+Remedy if it recurs: stop everything, `rm /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_*`.
+
+Localisation after the restart: geometric distinct (59%), 6/17 visual closures
+agree. The other 11 are not scattered: their implied corrections drift smoothly
+from (-0.63, 0.53, -110 deg) to (-0.43, 1.25, -94 deg) and all match today's
+earlier lifelong-mapping session (nodes 2545-3021) - gradual distortion within
+that session or odometry drift during the turn, not wrong matches. Watch
+whether lifelong mapping accumulates distortion.
+
 ### Problem 46 — map logically inconsistent after an unclean power-off (2026-10-31)
 
 After the 10-29 mission (lifelong mapping on), the robot was switched off
