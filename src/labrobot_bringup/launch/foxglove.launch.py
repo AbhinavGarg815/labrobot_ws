@@ -2,7 +2,17 @@
 #
 #   ros2 launch labrobot_bringup foxglove.launch.py
 #
-# Then in Foxglove: Open connection -> Foxglove WebSocket -> ws://<jetson-ip>:8765
+# Remote access is over SSH (no VPN). From your PC, tunnel the bridge port:
+#
+#   ssh -N -L 8765:localhost:8765 zine@<jetson-ip>
+#
+# then in Foxglove: Open connection -> Foxglove WebSocket -> ws://localhost:8765
+#
+# The bridge listens on 127.0.0.1 only, so it is reachable solely through that
+# tunnel: the robot's topics and its teleop/goal publishing are not open to
+# everyone on the network, and SSH provides the authentication and encryption.
+# address:=0.0.0.0 opens it on every interface again (e.g. on a private bench
+# network).
 #
 # Why this rather than RViz
 # -------------------------
@@ -64,10 +74,10 @@ def generate_launch_description():
         description='true: also offer raw images and the raw point cloud. Only on '
                     'a wired link and never while Nav2 is driving - see below.')
     declare_address = DeclareLaunchArgument(
-        'address', default_value='0.0.0.0',
-        description=('0.0.0.0 listens on every interface, so the same bridge is '
-                     'reachable over the LAN address and the Tailscale one '
-                     'without caring which route your PC takes.'),
+        'address', default_value='127.0.0.1',
+        description=('127.0.0.1: reachable only through an SSH tunnel '
+                     '(ssh -L 8765:localhost:8765 ...). 0.0.0.0 listens on every '
+                     'interface - no authentication, use only on a trusted network.'),
     )
 
     def bridge(whitelist, condition):

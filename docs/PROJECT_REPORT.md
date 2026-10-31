@@ -1904,9 +1904,22 @@ reload. Deliberately not set: degrading map quality to solve a non-problem.
 
 ### Remote visualisation
 
-`ros2 launch labrobot_bringup foxglove.launch.py`, then in Foxglove on your own
-PC: **Open connection -> Foxglove WebSocket -> `ws://<jetson-ip>:8765`**. It
-listens on 0.0.0.0 so the LAN and Tailscale addresses both work.
+Remote access is over **SSH** (Tailscale removed from the project, 2026-10-31).
+The bridge (started by robot.launch.py) listens on **127.0.0.1 only**; from your PC:
+
+    ssh -N -L 8765:localhost:8765 zine@<jetson-ip>
+
+then in Foxglove: **Open connection -> Foxglove WebSocket -> `ws://localhost:8765`**.
+SSH provides authentication and encryption; a bridge on 0.0.0.0 has neither and
+lets anyone on the network drive the robot (it accepts client publishing).
+`foxglove.launch.py address:=0.0.0.0` reopens it on a trusted bench network.
+
+**Network (2026-10-31):** an Intel AC8265 Wi-Fi/Bluetooth card is fitted in the
+Jetson's M.2 E-key slot (iwlwifi, firmware 8265-36, interface `wlP1p1s0`,
+Bluetooth hci0). It joins the "Galaxy" hotspot automatically (autoconnect yes;
+10.58.238.11 at first connection, -42 dBm, 130 Mbit/s on 2.4 GHz). Reach it by
+name - `ssh zine@ubuntu.local` (avahi/mDNS) - since hotspot addresses change.
+The USB-tethered phone is no longer needed for the network.
 
 Chosen over the alternatives because RViz needs either X forwarding (unusable
 over SSH) or a matching `ROS_DOMAIN_ID`, and the latter means DDS discovery plus
