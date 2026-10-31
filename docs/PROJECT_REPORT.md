@@ -996,6 +996,17 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Power lost while a mission waited for "go" (2026-10-31, ~17:03)
+
+The Jetson went down without a clean stop (most likely the battery) while
+`go s1 s2 s3 s4 --wait-start` was waiting - the robot had not moved. SQLite
+quick_check ok, but per Problem 46 an unclean close leaves the vocabulary
+unsaved, so the active map was replaced by `~/.ros/rtabmap.db.lastclean`
+(16:36 clean close); the unclean file is kept as
+`docs/maps/backup/unclean_v6_20261031_1703.db`. Lost: only the 16:37-17:03
+lifelong updates (robot mostly parked near r3). The `.lastclean` copy did its
+job on its first real use.
+
 ### M5.T3 — blocked waypoint: approach within 0.5 m (2026-10-31, user limit)
 
 `waypoints.py go` now sends one NavigateToPose per waypoint (not
