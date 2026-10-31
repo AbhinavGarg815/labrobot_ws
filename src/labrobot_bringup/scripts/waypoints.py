@@ -21,6 +21,11 @@ blocks it, the robot goes to the nearest reachable spot within 0.5 m
 the mission continues. It refuses to start unless the shared gate (nav_gate.py) passes:
 startup localisation confirmed and the current view matches the map.
 
+`go --wait-start` prepares the mission, then waits for a "go" on
+/labrobot/mission_cmd (std_msgs/String) - a Foxglove Publish panel button. A
+"stop" there at any time cancels the active goal, like Ctrl-C. Progress lines
+are also published (latched) on /labrobot/mission_status.
+
 `pick` saves a pose clicked in Foxglove without driving there: in a 3D panel,
 use "Publish pose" with the topic set to /waypoint_pick (NOT /goal_pose - the
 navigator subscribes to that and would start driving).
@@ -41,6 +46,7 @@ from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.msg import Costmap
+from std_msgs.msg import String
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -213,6 +219,14 @@ def feasible_target(costmap, robot_xy, x, y, max_shift=MAX_SHIFT_M):
     return float(cx[k]), float(cy[k]), float(d[k])
 
 
+def cancel(tool, h, why):
+    print(f'  {why} - stopping the robot', flush=True)
+    c = h.cancel_goal_async()
+    rclpy.spin_until_future_complete(tool, c, timeout_sec=5.0)
+    ok = c.result() is not None and len(c.result().goals_canceling) > 0
+    return ok
+
+
 def cmd_go(tool, args):
     """Drive the waypoints ONE AT A TIME (one NavigateToPose each), re-checking
     each against the live costmap just before its leg, so a waypoint blocked
@@ -237,6 +251,20 @@ def cmd_go(tool, args):
         route.append(('start', *start))
     route = route * args.loop
 
+    status = tool.create_publisher(String, '/labrobot/mission_status',
+                                   QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+
+    def say(text):
+        print(text, flush=True)
+        status.publish(String(data=text.strip()))
+
+    cmd = {'last': None}
+    tool.create_subscription(String, '/labrobot/mission_cmd',
+                             lambda m: cmd.__setitem__('last', m.data.strip().lower()), 10)
+
+    def stop_requested():
+        return cmd['last'] in ('stop', 'cancel')
+
     cm = {}
     tool.create_subscription(Costmap, '/global_costmap/costmap_raw', lambda m: cm.__setitem__('c', m),
                              QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
@@ -247,8 +275,17 @@ def cmd_go(tool, args):
     t_mission = time.time()
     while 'c' not in cm and time.time() - t_mission < 10:
         rclpy.spin_once(tool, timeout_sec=0.1)
-    print(f'  mission: {" -> ".join(r[0] for r in route)}  ({len(route)} waypoints) - ROBOT WILL MOVE',
-          flush=True)
+    plan = f'mission: {" -> ".join(r[0] for r in route)}  ({len(route)} waypoints)'
+    if args.wait_start:
+        say(f'  {plan} - waiting for "go" on /labrobot/mission_cmd')
+        cmd['last'] = None
+        while cmd['last'] not in ('go', 'start'):
+            rclpy.spin_once(tool, timeout_sec=0.1)
+            if stop_requested():
+                say('  mission cancelled before start'); return 130
+        cmd['last'] = None
+        t_mission = time.time()
+    say(f'  {plan} - ROBOT WILL MOVE')
 
     results = []
     for k, (name, x, y, yaw) in enumerate(route):
@@ -264,8 +301,8 @@ def cmd_go(tool, args):
                 break
             tx, ty, shift = tgt
             note = '' if shift == 0 else f' (blocked - approaching {shift*100:.0f} cm away)'
-            print(f'  [{time.time()-t_mission:6.1f}s] {k+1}/{len(route)} {name}{note}'
-                  + (' - retry' if attempt == 2 else ''), flush=True)
+            say(f'  [{time.time()-t_mission:6.1f}s] {k+1}/{len(route)} {name}{note}'
+                + (' - retry' if attempt == 2 else ''))
             goal = NavigateToPose.Goal(); goal.pose = pose_msg(tool, tx, ty, yaw)
             f = client.send_goal_async(goal)
             rclpy.spin_until_future_complete(tool, f, timeout_sec=15)
@@ -276,17 +313,19 @@ def cmd_go(tool, args):
             try:
                 while not r.done():
                     rclpy.spin_once(tool, timeout_sec=0.1)
+                    if stop_requested():
+                        ok = cancel(tool, h, 'stop from /labrobot/mission_cmd')
+                        say('  mission cancelled' if ok else
+                            '  WARNING: cancel not confirmed - stop the robot manually')
+                        return 130
                     if args.timeout and time.time() - t_mission > args.timeout:
                         print('  mission TIMEOUT - cancelling', flush=True)
                         c = h.cancel_goal_async(); rclpy.spin_until_future_complete(tool, c, timeout_sec=5)
                         return 1
             except KeyboardInterrupt:
-                print('  cancelled by user - stopping the robot', flush=True)
-                c = h.cancel_goal_async()
-                rclpy.spin_until_future_complete(tool, c, timeout_sec=5.0)
-                ok = c.result() is not None and len(c.result().goals_canceling) > 0
-                print('  mission cancelled' if ok else
-                      '  WARNING: cancel not confirmed - stop the robot manually', flush=True)
+                ok = cancel(tool, h, 'cancelled by user')
+                say('  mission cancelled' if ok else
+                    '  WARNING: cancel not confirmed - stop the robot manually')
                 return 130
             if r.result().status == GoalStatus.STATUS_SUCCEEDED:
                 end = tool.robot_pose(timeout=2.0)
@@ -297,15 +336,17 @@ def cmd_go(tool, args):
                 break
             outcome = ('FAILED', f'navigation status {r.result().status}')
         results.append((name, *outcome))
-        print(f'           -> {outcome[0]}: {outcome[1]}', flush=True)
+        say(f'           -> {name} {outcome[0]}: {outcome[1]}')
         if k + 1 < len(route):
             t_pause = time.time()
             while time.time() - t_pause < 2.0:     # settle, and still frames for RTAB-Map
                 rclpy.spin_once(tool, timeout_sec=0.1)
+            if stop_requested():
+                say('  mission cancelled between waypoints'); return 130
 
     n_ok = sum(1 for r in results if r[1] in ('REACHED', 'APPROACHED'))
-    print(f'\n  mission finished after {time.time()-t_mission:.0f} s: {n_ok}/{len(results)} waypoints '
-          f'reached or approached')
+    say(f'\n  mission finished after {time.time()-t_mission:.0f} s: {n_ok}/{len(results)} waypoints '
+        f'reached or approached')
     for name, kind, detail in results:
         print(f'    {name:8s} {kind:10s} {detail}')
     return 0 if n_ok == len(results) else 1
@@ -332,6 +373,8 @@ def main():
     s.add_argument('--loop', type=int, default=1, help='repeat the route this many times')
     s.add_argument('--timeout', type=float, default=0.0, help='seconds; 0 = none')
     s.add_argument('--skip-localisation-check', action='store_true')
+    s.add_argument('--wait-start', action='store_true',
+                   help='wait for "go" on /labrobot/mission_cmd (e.g. a Foxglove Publish panel)')
     args, _ = ap.parse_known_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
     # No rclpy signal handler, so Ctrl-C does NOT shut the ROS context down
     # before cmd_go can send its cancel: with the default handler the context

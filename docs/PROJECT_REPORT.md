@@ -1013,6 +1013,13 @@ Offline test on synthetic costmaps: free -> moved 0 cm; on a box -> 23 cm;
 0.1 m behind a wall -> near side, 23 cm; 1.0 m behind a wall -> skipped.
 Hardware test: pending (new user waypoints s1...).
 
+Start/stop from Foxglove (user asked to control when to drive): `go --wait-start`
+prepares the mission and waits for "go" on `/labrobot/mission_cmd`
+(std_msgs/String, a Foxglove Publish panel); "stop" there cancels the active
+goal at any time. Progress is latched on `/labrobot/mission_status`. Tested
+without driving: wait -> "stop" -> "mission cancelled before start", exit 130;
+status topic read back.
+
 ### M5.T2 — mission r1 -> r2 -> r3 rerun: r2 blocked by a real obstacle (2026-10-31)
 
 With `default_server_timeout: 200` the r2 leg no longer timed out (55 s of
