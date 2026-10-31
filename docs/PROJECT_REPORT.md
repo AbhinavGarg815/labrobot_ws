@@ -996,6 +996,20 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### M5.T2 — mission r1 -> r2 -> r3 rerun: r2 blocked by a real obstacle (2026-10-31)
+
+With `default_server_timeout: 200` the r2 leg no longer timed out (55 s of
+trying instead of 23 s), but the planner found no path: "failed to create plan,
+no valid path found" to (2.14, 0.18). In the global costmap r2 was cost 254 and
+cut off from the robot's free region (nearest reachable point 38 cm away). The
+live map showed 29/81 occupied cells within 20 cm of r2 that were free when
+the waypoint was picked - and the **user confirmed a real obstacle is there**.
+So lifelong mapping recorded the change correctly, the planner correctly
+refused, and the mission correctly reported r2 MISSED and went on to r3
+(2/3 reached, final pose 11 cm from r3).
+Next (user request): when a waypoint is blocked, approach the nearest free,
+reachable point within a limit instead of skipping it.
+
 ### Problem 47 — a waypoint abandoned in 23 s; Nav2 hung after a partial restart (2026-10-31)
 
 User mission r1 -> r2 -> r3 (clicked in Foxglove): r1 and r3 reached, **r2 MISSED
