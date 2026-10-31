@@ -1923,6 +1923,15 @@ The USB-tethered phone is no longer needed for the network.
 Tailscale removed from the Jetson on 2026-10-31 (`systemctl disable --now
 tailscaled`, `apt-get remove tailscale`) after SSH over the hotspot Wi-Fi was
 verified (session from 10.58.238.66). Log: `~/tailscale_removal.log`.
+Verified 2026-10-31: Foxglove connects through the tunnel (bridge sees the client
+at 127.0.0.1). The bridge only runs with the robot stack; without it,
+`ros2 launch labrobot_bringup foxglove.launch.py` starts it alone (a tunnel to a
+port nobody listens on is what "the ssh -L command is not working" turned out
+to be). This bridge speaks the `foxglove.sdk.v1` subprotocol (101 Switching
+Protocols; `foxglove.websocket.v1` gets 400).
+**Caution:** Foxglove's "Pose estimate" tool publishes /initialpose, which
+RTAB-Map obeys - a stray click relocates the robot. Use /waypoint_pick for
+waypoints.
 
 Chosen over the alternatives because RViz needs either X forwarding (unusable
 over SSH) or a matching `ROS_DOMAIN_ID`, and the latter means DDS discovery plus
