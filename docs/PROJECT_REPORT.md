@@ -996,6 +996,35 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### M5.T4 — missions on the restored map, person-confirmed start (2026-11-01)
+
+Localisation (map frozen, `--localization`): auto_localise on the restored
+map - spot 1 ambiguous (82%) in the middle of the lab, ring 0.44; spot 2
+distinct (75%) ring 0.49 but **0 visual closures**; after a costmap clear, a
+second run gave corridor answers at spots 1-2 (93-94%) and the middle at spots
+3-4 (spot 4 distinct, 63%, ring 0.44). Spots 2->3 were 5 m apart after a 0.6 m
+drive, so the corridor answers were aliases; 3->4 were 0.67 m apart (drive
+0.6 m) - consistent. The spot-4 pose was hinted to RTAB-Map, the view check
+gave 3% far-in-free / 95% near obstacles, the **user confirmed** it in
+Foxglove, and `auto_localise.py --accept-current --min-closures 0` published
+localised (person + distinct geometry + view check; no visual closure).
+Mission t1 -> t2 -> t3 (`--wait-start`, user pressed go in Foxglove), 203 s:
+t1 REACHED 15 cm, **t2 FAILED** (both attempts: RPP "collision ahead",
+controller patience exceeded, recovery Spin "Collision Ahead"), t3 REACHED
+8 cm. Re-sent to t2 from t3 with path recording and a collision-triggered
+costmap/depth snapshot armed: **REACHED 9 cm in 67 s, no collision** - the
+blocker was transient (or a stale local-costmap mark); no data from the
+failed legs. Drive link clean throughout (no write failures since Problem 48).
+Open:
+- Visual closures to the restored map: every candidate tonight was rejected
+  with exactly **0 inliers** (45-75 matches), 110/123 at 0 in the first run.
+  Exactly 0 is suspicious (systematic, not lighting) - investigate (depth of
+  stored features? `RGBD/LoopClosureReextractFeatures`?).
+- Matcher: a penalty for scan endpoints in mapped free space far from any
+  surface sharpens true matches offline (ratio 0.64->0.40, 0.59->0.49,
+  0.75->0.58 at weight 1.0) but does NOT remove the upper-left corridor alias;
+  not deployed.
+
 ### Problem 49 — a lifelong session rotated the map 3.9 deg and added contradicting nodes (2026-11-01)
 
 Symptom: since 10-31 ~21:30 the ring match always put its best AND runner-up
