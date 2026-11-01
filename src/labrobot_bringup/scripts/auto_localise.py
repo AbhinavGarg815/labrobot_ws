@@ -361,9 +361,11 @@ class AutoLocalise(Node):
         rclpy.spin_until_future_complete(self, f, timeout_sec=10.0)
         return f.result() is not None
 
-    def clear_costmaps(self):
-        for name in ('local_costmap/clear_entirely_local_costmap',
-                     'global_costmap/clear_entirely_global_costmap'):
+    def clear_costmaps(self, local_only=False):
+        names = ['local_costmap/clear_entirely_local_costmap']
+        if not local_only:
+            names.append('global_costmap/clear_entirely_global_costmap')
+        for name in names:
             cli = self.create_client(ClearEntireCostmap, name)
             if cli.wait_for_service(timeout_sec=5.0):
                 f = cli.call_async(ClearEntireCostmap.Request())
@@ -582,6 +584,12 @@ def _run(n, args):
                   f'({math.degrees(b):+.0f} deg, {clear:.1f} m clear) - ROBOT DRIVES', flush=True)
             if not (n.turn_by(b) and n.drive_forward(args.move)):
                 n.status(False, 'could not reach the next viewpoint (blocked)'); return 1
+            # Obstacles marked from the previous spot can outlive what they
+            # were: 2026-10-31 the spot-2 Spin aborted "Collision Ahead" on
+            # lethal cells 26-33 cm ahead while the camera saw nothing within
+            # 0.8 m; clearing fixed it. The spin re-marks real obstacles as it
+            # turns towards them.
+            n.clear_costmaps(local_only=True)
             n.spin_for(1.0)
 
     if accepted is None:
@@ -620,6 +628,7 @@ def accept_current(n, args):
     # 60 s, 2026-10-31), so turn slowly - the same collision-checked Spin as
     # the automatic path - only until enough agreeing closures have arrived.
     n.status(False, 'operator-confirmed pose: turning slowly for fresh views of the saved map')
+    n.clear_costmaps(local_only=True)        # stale obstacles block the turn (see _run)
     n.spin_for(2.0)
     if len(n.agreeing(0.30, 10.0)) < args.min_closures:
         n.spin_continuous(360.0, 240, lambda _d: len(n.agreeing(0.30, 10.0)) >= args.min_closures)
