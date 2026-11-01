@@ -996,6 +996,35 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 49 — a lifelong session rotated the map 3.9 deg and added contradicting nodes (2026-11-01)
+
+Symptom: since 10-31 ~21:30 the ring match always put its best AND runner-up
+at the same two places - upper-left (-1.2, 5.0) and upper-right (2.8, 5.6) -
+from different start points (8 attempts), and the 10-31 16:25 ring, re-scored
+at its accepted pose, fell from 0.419 to 0.036 on the current map.
+Measured (offline, opt_poses of the 883 old nodes, before vs after the
+16:25-16:36 lifelong session; scratch scripts pose_drift / rigid_fit):
+- raw shift median 15.9 cm, max 51.4 cm (342 nodes > 30 cm, all at y 4-7 m);
+- one rigid transform explains it: **+3.87 deg rotation**, (0.00, -0.04) m;
+  residual median 3.7 cm, max 19 cm. The map frame rotated; the shape held.
+- The session's own nodes contradict each other: on 11-01 visual closures to
+  nodes 2777/2778 gave map->odom (-0.03, 0.59, 14.5 deg), to node 2547
+  (-0.51, -0.20, 0.2 deg) - 0.65 m / 14 deg apart. Geometry agreed with the
+  first (distinct, 65%); RTAB-Map snapped to the second, so the pose was
+  refused ("did not adopt ... 0.65 m / 12 deg off").
+All 24 closures from that session to the old map lie in the middle area
+(-0.6, 0.5..1.8) with small residuals except one (20.6 cm, 2775->2197); why
+the frame rotated is not yet known.
+Action: restored the pre-session map `lab_v6_recovered_20261031.db` (also as
+`.lastclean`); the session map is kept as
+`docs/maps/backup/rotated_v6_session1625_20261031.db`. s1-s4 (picked in the
+rotated frame) converted with the inverse transform; p1/p2/r1-r3/wp1-3 were
+picked in the restored frame and are valid again. **Bringup in
+`--localization` (map frozen) until lifelong mapping is understood** - it is
+the only source of these errors so far.
+Also found: the ring match's two false winners are cluttered upper areas;
+true-place scores (0.34-0.42) are not far above them, so ambiguity is common.
+
 ### Session end 2026-10-31 (22:18) — state and next steps
 
 - Drive fix (Problem 48) held: second bringup drove spot 1 -> spot 2 with the
