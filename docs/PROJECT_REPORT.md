@@ -996,6 +996,19 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Operator guide (2026-11-11, user request)
+
+`docs/OPERATOR_GUIDE.md`: how to run the robot alone - connect,
+start, localise, drive (Foxglove goals, waypoint missions, relative moves),
+stop/power off, building and switching maps, health checks, logs,
+troubleshooting, known limitations, script reference. Kept current with
+every change. New operator scripts: `scripts/localise.sh` (re-localise:
+auto / `--confirm` / `--confirm-geometry`, ids and map mode found from the
+running bringup) and `scripts/pick_waypoints.sh PREFIX` (replaces
+docs/logs/pick_loop.sh; continues numbering, never overwrites). Fixed on the
+way: the drift guard would have set aside a brand-new map (ids also start at
+1) - it now compares the first nodes' capture times first.
+
 ### M5.T5 — test on the original 27 Oct map (v6_clean), map frozen (2026-11-11)
 
 User request: "first, lets test on old map". Activated
