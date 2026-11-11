@@ -31,24 +31,64 @@ def adaptive_speed(person_speed, dist, standoff, gain, vmin, vmax):
 
 
 class Costmap:
-    """Lookup into the local costmap (OccupancyGrid in odom, values 0-100)."""
+    """Lookup into the local costmap as published on /local_costmap/costmap_raw
+    (nav2_msgs/Costmap, odom frame, Nav2's own 0-255 scale: 253 inscribed,
+    254 lethal, 255 unknown).
+
+    Not the OccupancyGrid on /local_costmap/costmap: Nav2 publishes that in
+    full only when the rolling window moves (TRANSIENT_LOCAL) and as
+    incremental updates otherwise, so a plain subscriber gets it rarely and
+    stale. costmap_raw is the whole grid every cycle (~2 Hz).
+    """
 
     def __init__(self, msg):
+        md = msg.metadata
         self.frame = msg.header.frame_id
-        self.res = msg.info.resolution
-        self.ox = msg.info.origin.position.x
-        self.oy = msg.info.origin.position.y
-        self.w = msg.info.width
-        self.h = msg.info.height
-        self.data = np.asarray(msg.data, dtype=np.int16).reshape(self.h, self.w)
+        self.res = md.resolution
+        self.ox = md.origin.position.x
+        self.oy = md.origin.position.y
+        self.w = md.size_x
+        self.h = md.size_y
+        self.data = np.asarray(msg.data, dtype=np.uint8).reshape(self.h, self.w)
 
     def cost(self, xy, radius=0.0):
         """Max cost within radius of xy; None outside the window."""
         # floor with a tiny epsilon: (0.40 + 1.5) / 0.05 is 37.999... in floats
         cx = math.floor((xy[0] - self.ox) / self.res + 1e-9)
         cy = math.floor((xy[1] - self.oy) / self.res + 1e-9)
-        r = int(math.ceil(radius / self.res))
+        r = int(math.ceil(radius / self.res - 1e-9))
         if not (0 <= cx < self.w and 0 <= cy < self.h):
             return None
         patch = self.data[max(cy - r, 0):cy + r + 1, max(cx - r, 0):cx + r + 1]
         return int(patch.max())
+
+
+def free_goal(costmap, robot_xy, person_xy, goal_xy, heading, standoff, max_cost,
+              angles_deg=(15, -15, 30, -30, 45, -45, 60, -60)):
+    """Move a stand-off goal that lies in an obstacle round the person.
+
+    Returns (goal_xy, heading, note). A turn-only goal (the robot's own
+    position) is returned unchanged: the robot is already there, and its own
+    cell can carry inflation from whatever it is standing next to. Outside
+    the costmap window the goal is kept (the planner decides). If nothing on
+    the stand-off arc (+/-60 deg) is free, the robot stays and faces the
+    person.
+    """
+    robot_xy = np.asarray(robot_xy, float)
+    person_xy = np.asarray(person_xy, float)
+    goal_xy = np.asarray(goal_xy, float)
+    if costmap is None or np.linalg.norm(goal_xy - robot_xy) < 1e-6:
+        return goal_xy, heading, ''
+    c = costmap.cost(goal_xy, 0.05)
+    if c is None or c < max_cost:
+        return goal_xy, heading, ''
+    base = math.atan2(robot_xy[1] - person_xy[1], robot_xy[0] - person_xy[0])
+    for dk in angles_deg:
+        a = base + math.radians(dk)
+        cand = person_xy + standoff * np.array([math.cos(a), math.sin(a)])
+        cc = costmap.cost(cand, 0.05)
+        if cc is not None and cc < max_cost:
+            return cand, math.atan2(person_xy[1] - cand[1], person_xy[0] - cand[0]), \
+                f'stand-off blocked, moved {dk:+d} deg round the person'
+    face = math.atan2(person_xy[1] - robot_xy[1], person_xy[0] - robot_xy[0])
+    return robot_xy.copy(), face, 'stand-off blocked all round - holding, facing the person'

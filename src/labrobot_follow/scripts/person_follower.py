@@ -39,6 +39,7 @@ no NavigateToPose, no Spin, no speed limit.
 import json
 import math
 import os
+import signal
 import time
 
 import numpy as np
@@ -47,17 +48,19 @@ from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import ComputePathToPose, NavigateToPose, Spin
-from nav2_msgs.msg import SpeedLimit
-from nav_msgs.msg import OccupancyGrid, Odometry, Path
+from nav2_msgs.msg import Costmap as CostmapMsg, SpeedLimit
+from nav_msgs.msg import Odometry, Path
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
-from labrobot_follow.follow_logic import Costmap, adaptive_speed, standoff_goal, wrap, yaw_quat
+from labrobot_follow.follow_logic import (Costmap, adaptive_speed, free_goal, standoff_goal,
+                                          wrap, yaw_quat)
 
 IDLE, ACQUIRE, FOLLOW, LOST, SEARCH, WAIT = 'IDLE', 'ACQUIRE', 'FOLLOW', 'LOST', 'SEARCH', 'WAIT'
 NO_SPEED_LIMIT = 0.0
@@ -81,7 +84,8 @@ class PersonFollower(Node):
         p('max_range_m', 5.0)
         p('acquire_timeout_s', 4.0)
         p('seed_views', 4)
-        p('goal_free_cost', 60)
+        p('goal_free_cost', 128)
+        p('tf_grace_s', 2.0)
         p('rate_hz', 5.0)
         p('dry_run', False)
         p('odom_frame', 'odom')
@@ -91,7 +95,7 @@ class PersonFollower(Node):
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         for n in ('standoff_m', 'min_distance_m', 'min_speed', 'max_speed', 'speed_gain',
                   'goal_deadband_m', 'lost_after_s', 'lost_hold_s', 'lost_goto_s', 'search_wait_s',
-                  'max_range_m', 'acquire_timeout_s', 'seed_views', 'goal_free_cost',
+                  'max_range_m', 'acquire_timeout_s', 'seed_views', 'goal_free_cost', 'tf_grace_s',
                   'dry_run', 'odom_frame', 'base_frame', 'behavior_tree'):
             setattr(self, n, g(n))
         self.goal_deadband = math.radians(g('goal_deadband_deg'))
@@ -116,7 +120,7 @@ class PersonFollower(Node):
         self.create_subscription(String, '/labrobot/follow_cmd', self.on_cmd, 10)
         self.create_subscription(Odometry, '/labrobot/follow_target', self.on_target, 10)
         self.create_subscription(String, '/labrobot/target_state', self.on_state, 10)
-        self.create_subscription(OccupancyGrid, '/local_costmap/costmap', self.on_costmap, 1)
+        self.create_subscription(CostmapMsg, '/local_costmap/costmap_raw', self.on_costmap, 1)
 
         self.state = IDLE
         self.state_t = time.monotonic()
@@ -124,6 +128,8 @@ class PersonFollower(Node):
         self.tstate = {}
         self.tstate_t = 0.0
         self.costmap = None
+        self.costmap_t = 0.0
+        self.tf_ok_t = time.monotonic()
         self.nav_handle = None
         self.nav_pending = False
         self.nav_fail = 0
@@ -150,7 +156,7 @@ class PersonFollower(Node):
             if self.state in (IDLE,):
                 self.enter(ACQUIRE)
                 self.set_status('ACQUIRE: locking the person ahead (stand still in front, '
-                                f'within 3.5 m)')
+                                'within 3.5 m)')
         elif cmd == 'stop':
             self.halt('stopped by operator')
         elif cmd in ('release', 'reset'):
@@ -170,6 +176,7 @@ class PersonFollower(Node):
 
     def on_costmap(self, msg):
         self.costmap = Costmap(msg)
+        self.costmap_t = time.monotonic()
 
     # ---------------------------------------------------------------- helpers
     def enter(self, state):
@@ -207,24 +214,6 @@ class PersonFollower(Node):
         m.pose.position.x, m.pose.position.y = float(xy[0]), float(xy[1])
         m.pose.orientation.z, m.pose.orientation.w = yaw_quat(heading)
         return m
-
-    def free_goal(self, robot_xy, person_xy, goal_xy, heading):
-        """Stand-off goal moved round the person if it is in an obstacle."""
-        cm = self.costmap
-        if cm is None or cm.frame != self.odom_frame:
-            return goal_xy, heading
-        c = cm.cost(goal_xy, 0.05)
-        if c is None or c < self.goal_free_cost:
-            return goal_xy, heading
-        base = math.atan2(robot_xy[1] - person_xy[1], robot_xy[0] - person_xy[0])
-        for dk in (15, -15, 30, -30, 45, -45, 60, -60):
-            a = base + math.radians(dk)
-            cand = person_xy + self.standoff_m * np.array([math.cos(a), math.sin(a)])
-            cc = cm.cost(cand, 0.05)
-            if cc is not None and cc < self.goal_free_cost:
-                return cand, math.atan2(person_xy[1] - cand[1], person_xy[0] - cand[0])
-        # Nowhere free at the stand-off: stay and face them.
-        return robot_xy.copy(), math.atan2(person_xy[1] - robot_xy[1], person_xy[0] - robot_xy[0])
 
     def publish_speed(self, v):
         if self.dry_run:
@@ -382,8 +371,14 @@ class PersonFollower(Node):
             return
         rp = self.robot_pose()
         if rp is None:
-            self.halt('no odom -> base_footprint transform')
+            # a short gap (DDS discovery, a loaded CPU) is not a reason to give
+            # up; a missing transform for tf_grace_s is
+            if time.monotonic() - self.tf_ok_t > self.tf_grace_s:
+                self.halt(f'no odom -> base_footprint transform for {self.tf_grace_s:.0f} s')
+            elif self.state == FOLLOW:
+                self.cancel_nav()
             return
+        self.tf_ok_t = time.monotonic()
         robot_xy, robot_yaw = rp
         now = time.monotonic()
         seen = self.target_seen()
@@ -437,7 +432,9 @@ class PersonFollower(Node):
                             f'{self.min_distance_m:.2f})')
             return
         gxy, gh = standoff_goal(robot_xy, pxy, self.standoff_m)
-        gxy, gh = self.free_goal(robot_xy, pxy, gxy, gh)
+        cm = self.costmap if (self.costmap is not None and self.costmap.frame == self.odom_frame
+                              and time.monotonic() - self.costmap_t < 2.0) else None
+        gxy, gh, note = free_goal(cm, robot_xy, pxy, gxy, gh, self.standoff_m, self.goal_free_cost)
         v = adaptive_speed(speed, d, self.standoff_m, self.speed_gain, self.min_speed, self.max_speed)
         self.publish_speed(v)
         self.send_or_update_goal(gxy, gh, stamp)
@@ -446,8 +443,9 @@ class PersonFollower(Node):
         if self.dry_run and hasattr(self, 'last_plan'):
             plan = f'; plan {self.last_plan[1]} ({self.last_plan[0]} poses)'
         fails = f'; {self.nav_fail} nav failures in a row' if self.nav_fail else ''
+        note = f'; {note}' if note else ''
         self.set_status(f'FOLLOW: person {tid} at {d:.1f} m, {side}, walking {speed:.2f} m/s; '
-                        f'speed {v:.2f} m/s{far}{plan}{fails}'
+                        f'speed {v:.2f} m/s{far}{note}{plan}{fails}'
                         + (' (DRY RUN)' if self.dry_run else ''))
 
     def lose(self, robot_xy):
@@ -509,8 +507,18 @@ class PersonFollower(Node):
         self.pub_status.publish(String(data='IDLE: follower stopped'))
 
 
+def _interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
 def main():
-    rclpy.init()
+    # Own the signals: rclpy's default handler shuts the context down on
+    # SIGINT/SIGTERM BEFORE this code runs, and then the Nav2 goal cannot be
+    # cancelled - the robot would carry on to the last stand-off point.
+    # (scripts/stop_robot.sh sends SIGTERM; Ctrl-C is SIGINT.)
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
     node = PersonFollower()
     try:
         rclpy.spin(node)

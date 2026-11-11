@@ -10,12 +10,12 @@ ament_python_install_package(${PROJECT_NAME})
 install(
   PROGRAMS
     scripts/person_tracker.py
+    scripts/person_follower.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(
   DIRECTORY config launch behavior_trees
-  PATTERN ".gitkeep" EXCLUDE
   DESTINATION share/${PROJECT_NAME}
 )
 

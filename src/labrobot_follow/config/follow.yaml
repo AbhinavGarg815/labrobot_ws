@@ -1,0 +1,36 @@
+# Person following parameters (labrobot_follow). Engines are chosen in
+# follow.launch.py (detector:= / reid:=), built by tools/build_follow_models.sh.
+person_tracker:
+  ros__parameters:
+    det_conf: 0.15                 # keep weak boxes: ByteTrack's second stage uses them
+    min_box_height_px: 40          # ~7 m away for a whole person; smaller is noise
+    select_max_bearing_deg: 20.0   # `start` locks the nearest person within this ...
+    select_max_range_m: 3.5        # ... and this range
+    click_radius_m: 0.8            # Foxglove "Publish point" must land this close
+    reid_gate_base_m: 1.0          # re-acquire only where the target could be:
+    reid_gate_speed_mps: 1.5       #   base + walking speed x time lost
+    reid_thresh: 0.60              # re-ID: score needed (tuned on recordings, M6.T2)
+    reid_margin: 0.05              # ... and lead over the best other person
+    debug_rate: 5.0                # Hz, debug image / markers, only while viewed
+    perf_log_s: 10.0
+
+person_follower:
+  ros__parameters:
+    standoff_m: 1.2                # user decision 2026-11-11
+    min_distance_m: 0.8            # closer: hold (Nav2 goal cancelled)
+    min_speed: 0.06                # speed floor while following (user: 0.06 for tests)
+    max_speed: 0.06                # TEST CAP. Raise with scripts/follow.sh --max-speed
+    speed_gain: 0.3                # m/s per m of distance error, on top of person speed
+    goal_deadband_m: 0.15          # re-send the goal only when it moved this much ...
+    goal_deadband_deg: 10.0        # ... or turned this much
+    lost_after_s: 1.0              # target unseen this long -> LOST
+    lost_hold_s: 2.0               # LOST: hold this long before driving to last seen
+    lost_goto_s: 60.0              # cap on that drive
+    search_wait_s: 60.0            # after the 360 deg search, watch this long
+    max_range_m: 5.0               # beyond: "falling behind" in the status
+    acquire_timeout_s: 4.0
+    seed_views: 4                  # appearance views to collect before moving
+    goal_free_cost: 128            # local costmap_raw cost (0-255) a goal cell must be under:
+                                   # 128 = ~0.34 m from an obstacle with this inflation
+    tf_grace_s: 2.0                # odom->base_footprint may be missing this long
+    rate_hz: 5.0

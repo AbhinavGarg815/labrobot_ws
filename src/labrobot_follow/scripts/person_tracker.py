@@ -54,12 +54,8 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from vision_msgs.msg import Detection3D, Detection3DArray, ObjectHypothesisWithPose
 from visualization_msgs.msg import Marker, MarkerArray
 
-from labrobot_follow import geometry as geo
-from labrobot_follow.detector import PoseDetector, ReidEncoder, mark_clean
-from labrobot_follow.identity import TargetIdentity
-from labrobot_follow.tracker import PersonTracker, rotation_homography
-
-CHI2_2D_99 = 9.21
+from labrobot_follow.detector import PoseDetector, ReidEncoder
+from labrobot_follow.pipeline import PersonPipeline
 
 
 def quat_to_rot(q):
@@ -114,31 +110,24 @@ class PersonTrackerNode(Node):
 
         self.odom_frame = g('odom_frame')
         self.base_frame = g('base_frame')
-        self.det_conf = g('det_conf')
-        self.min_box_h = g('min_box_height_px')
-        self.sel_bearing = math.radians(g('select_max_bearing_deg'))
-        self.sel_range = g('select_max_range_m')
-        self.click_radius = g('click_radius_m')
-        self.gate_base = g('reid_gate_base_m')
-        self.gate_speed = g('reid_gate_speed_mps')
         self.debug_period = 1.0 / max(g('debug_rate'), 0.1)
         self.perf_log_s = g('perf_log_s')
 
         if not g('detector_engine') or not g('reid_engine'):
             raise RuntimeError('detector_engine and reid_engine parameters are required')
-        self.detector = PoseDetector(g('detector_engine'), conf_thresh=self.det_conf)
+        self.detector = PoseDetector(g('detector_engine'), conf_thresh=g('det_conf'))
         self.reid = ReidEncoder(g('reid_engine'))
-        self.tracker = PersonTracker()
-        self.identity = TargetIdentity(reid_thresh=g('reid_thresh'), reid_margin=g('reid_margin'))
-        self.kf = geo.TargetFilter()
+        self.pipe = PersonPipeline(
+            self.detector, self.reid, min_box_h=g('min_box_height_px'),
+            select_max_bearing_deg=g('select_max_bearing_deg'),
+            select_max_range_m=g('select_max_range_m'), click_radius_m=g('click_radius_m'),
+            reid_gate_base_m=g('reid_gate_base_m'), reid_gate_speed_mps=g('reid_gate_speed_mps'),
+            reid_thresh=g('reid_thresh'), reid_margin=g('reid_margin'))
 
         self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.K = None
-        self.prev_R = None
-        self.pos3d = {}           # track id -> (stamp, xy in odom, 2x2 cov, range, bearing)
-        self.pending_select = None    # ('nearest',) | ('id', n) | ('point', xy)
         self.last_debug = 0.0
         self.stage = Stage()
         self.last_perf = time.monotonic()
@@ -175,14 +164,14 @@ class PersonTrackerNode(Node):
         words = msg.data.strip().lower().split()
         if not words:
             return
+        idn = self.pipe.identity
         if words[0] == 'select' and len(words) == 2 and words[1].isdigit():
-            self.pending_select = ('id', int(words[1]))
-        elif words[0] == 'start' and self.identity.target_id is None and not self.identity.has_model:
-            self.pending_select = ('nearest',)
+            self.pipe.select_id(int(words[1]))
+        elif words[0] == 'start' and idn.target_id is None and not idn.has_model:
+            # `start` with a remembered target resumes following that person
+            self.pipe.select_nearest()
         elif words[0] in ('release', 'reset'):
-            self.identity.reset()
-            self.kf.reset()
-            self.event('released by operator')
+            self.pipe.release()
 
     def on_click(self, msg):
         try:
@@ -194,7 +183,7 @@ class PersonTrackerNode(Node):
         R = quat_to_rot(tf.transform.rotation)
         t = tf.transform.translation
         p = R @ np.array([msg.point.x, msg.point.y, msg.point.z]) + [t.x, t.y, t.z]
-        self.pending_select = ('point', p[:2])
+        self.pipe.select_point(p[:2])
 
     def event(self, text):
         self.get_logger().info(f'target: {text}')
@@ -233,39 +222,10 @@ class PersonTrackerNode(Node):
             return
         R, tcam = cam
 
-        t1 = time.perf_counter()
-        dets = [d for d in self.detector(rgb) if d['box'][3] - d['box'][1] >= self.min_box_h]
-        times['detect'] = (time.perf_counter() - t1) * 1000
-        mark_clean(dets, w)
-        t1 = time.perf_counter()
-        if dets:
-            feats = self.reid(rgb, [d['box'] for d in dets])
-            for d, f in zip(dets, feats):
-                d['feat'] = f
-        times['reid'] = (time.perf_counter() - t1) * 1000
-
-        t1 = time.perf_counter()
-        H = None
-        if self.prev_R is not None:
-            H = rotation_homography(self.K, R.T @ self.prev_R)
-        self.prev_R = R
-        tracks = self.tracker.update(dets, ts, H)
-
-        # 3D for every track matched in this frame
-        self.pos3d = {k: v for k, v in self.pos3d.items() if ts - v[0] < 3.0}
-        for tr in tracks:
-            if not tr.matched_this_frame:
-                continue
-            m = self.measure(tr.det, depth, R, tcam, w, h)
-            if m is not None:
-                self.pos3d[tr.id] = (ts,) + m
-        times['track'] = (time.perf_counter() - t1) * 1000
-
-        self.apply_selection(tracks, ts)
-        alive = {t.id for t in self.tracker.tracks}
-        event, tid = self.identity.step(tracks, ts, plausible=lambda tr: self.plausible(tr, ts),
-                                        alive_ids=alive)
-        state = self.update_target(event, tid, tracks, ts)
+        tracks, state, times = self.pipe.process(rgb, depth, self.K, R, tcam, ts)
+        for e in self.pipe.events:
+            self.event(e)
+        self.pipe.events.clear()
         times['total'] = (time.perf_counter() - t0) * 1000
         latency = (self.get_clock().now() - stamp).nanoseconds * 1e-6
         times['latency'] = latency
@@ -275,104 +235,6 @@ class PersonTrackerNode(Node):
         self.publish(rgb_msg.header, tracks, state, rgb, times)
         self.perf_log()
 
-    def measure(self, det, depth, R, tcam, w, h):
-        region, (u, v) = geo.core_region(det['box'], det.get('kpts'), img_w=w, img_h=h)
-        z, n = geo.body_depth(depth, region, scale=0.001)
-        if z is None:
-            return None
-        z += geo.BODY_HALF_DEPTH_M
-        p_cam = geo.backproject(u, v, z, self.K)
-        p_odom = R @ p_cam + tcam
-        ray = p_odom[:2] - tcam[:2]
-        rng = float(np.linalg.norm(ray))
-        if rng < 1e-3:
-            return None
-        s_along, s_across = geo.measurement_cov_cam(p_cam, self.K[0, 0])
-        cov = geo.ground_cov(ray / rng, s_along, s_across)
-        bearing = math.atan2(-p_cam[0], p_cam[2])      # + = person to the robot's left
-        return p_odom[:2], cov, float(math.hypot(p_cam[0], p_cam[2])), bearing
-
-    def plausible(self, tr, ts):
-        """3D gate for re-acquisition: could the target have walked here?"""
-        if not self.kf.initialised:
-            return True
-        m = self.pos3d.get(tr.id)
-        if m is None or ts - m[0] > 0.5:
-            return False
-        last = self.kf.position_at(self.kf.last_meas_t, 0.0)
-        dt = max(ts - self.kf.last_meas_t, 0.0)
-        return float(np.linalg.norm(m[1] - last)) <= self.gate_base + self.gate_speed * dt
-
-    def apply_selection(self, tracks, ts):
-        sel = self.pending_select
-        if sel is None:
-            return
-        self.pending_select = None
-        cand = [(tr, self.pos3d[tr.id]) for tr in tracks
-                if tr.id in self.pos3d and ts - self.pos3d[tr.id][0] < 0.5]
-        chosen = None
-        if sel[0] == 'id':
-            chosen = next((tr for tr in tracks if tr.id == sel[1]), None)
-            if chosen is None:
-                self.event(f'select {sel[1]}: no such person in view')
-                return
-        elif sel[0] == 'nearest':
-            front = [(m[3], tr) for tr, m in cand
-                     if abs(m[4]) <= self.sel_bearing and m[3] <= self.sel_range]
-            if not front:
-                self.event('start: nobody within '
-                           f'{self.sel_range:.1f} m and +/-{math.degrees(self.sel_bearing):.0f} deg ahead')
-                return
-            chosen = min(front, key=lambda x: x[0])[1]
-        elif sel[0] == 'point':
-            near = [(float(np.linalg.norm(m[1] - sel[1])), tr) for tr, m in cand]
-            near = [x for x in near if x[0] <= self.click_radius]
-            if not near:
-                self.event(f'click: nobody within {self.click_radius:.1f} m of it')
-                return
-            chosen = min(near, key=lambda x: x[0])[1]
-        self.identity.lock(chosen.id)
-        self.kf.reset()
-        self.event(f'locked on person {chosen.id}')
-
-    def update_target(self, event, tid, tracks, ts):
-        """Feed the KF and return the state dict published on target_state."""
-        if event == 'switch':
-            self.event('identity switch suspected - target dropped, searching by appearance')
-        elif event == 'reacquired':
-            self.kf.reset()
-            self.event(f're-identified as person {tid}')
-        st = {'event': event, 'track_id': self.identity.target_id, 'gallery':
-              len(self.identity.short) + len(self.identity.long)}
-        tgt = None
-        if self.identity.target_id is not None:
-            tgt = next((t for t in tracks if t.id == self.identity.target_id), None)
-        if tgt is not None and tgt.matched_this_frame and tgt.id in self.pos3d \
-                and self.pos3d[tgt.id][0] == ts:
-            _, xy, cov, rng, bearing = self.pos3d[tgt.id]
-            if not self.kf.initialised:
-                self.kf.init(xy, cov, ts)
-            else:
-                self.kf.predict(ts)
-                if self.kf.mahalanobis2(xy, cov) <= CHI2_2D_99 * 4:
-                    self.kf.update(xy, cov, ts)
-                else:
-                    st['rejected_measurement'] = True
-            st.update(range=round(rng, 3), bearing_deg=round(math.degrees(bearing), 1))
-            if tgt.det.get('feat') is not None and self.identity.has_model:
-                st['reid_score'] = round(self.identity.score(tgt.det['feat']), 3)
-        elif self.kf.initialised:
-            self.kf.predict(ts)
-        if self.kf.initialised:
-            st['seen_age_s'] = round(ts - self.kf.last_meas_t, 2)
-        if self.identity.target_id is None:
-            st['state'] = 'searching' if self.identity.has_model else 'none'
-        elif tgt is not None and tgt.matched_this_frame:
-            st['state'] = 'tracking' if event == 'tracking' else 'occluded'
-        else:
-            st['state'] = 'coasting'
-        return st
-
     # ------------------------------------------------------------------ output
     def publish(self, header, tracks, st, rgb, times):
         odom_header = header.__class__()
@@ -380,13 +242,13 @@ class PersonTrackerNode(Node):
         odom_header.frame_id = self.odom_frame
         arr = Detection3DArray(header=odom_header)
         for tr in tracks:
-            m = self.pos3d.get(tr.id)
+            m = self.pipe.pos3d.get(tr.id)
             if m is None:
                 continue
             d = Detection3D(header=odom_header)
             d.id = str(tr.id)
             hyp = ObjectHypothesisWithPose()
-            hyp.hypothesis.class_id = 'target' if tr.id == self.identity.target_id else 'person'
+            hyp.hypothesis.class_id = 'target' if tr.id == self.pipe.identity.target_id else 'person'
             hyp.hypothesis.score = float(tr.score)
             hyp.pose.pose.position.x, hyp.pose.pose.position.y = float(m[1][0]), float(m[1][1])
             hyp.pose.pose.orientation.w = 1.0
@@ -401,28 +263,26 @@ class PersonTrackerNode(Node):
             arr.detections.append(d)
         self.pub_people.publish(arr)
 
-        if self.kf.initialised and self.kf.last_meas_t is not None:
+        kf = self.pipe.kf
+        if kf.initialised and kf.last_meas_t is not None:
             o = Odometry(header=odom_header)
             o.child_frame_id = self.odom_frame
-            x = self.kf.x
+            x = kf.x
             o.pose.pose.position.x, o.pose.pose.position.y = float(x[0]), float(x[1])
-            yaw = math.atan2(x[3], x[2]) if self.kf.speed > 0.15 else 0.0
+            yaw = math.atan2(x[3], x[2]) if kf.speed > 0.15 else 0.0
             o.pose.pose.orientation.z, o.pose.pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
             pc = np.zeros((6, 6))
-            pc[:2, :2] = self.kf.P[:2, :2]
+            pc[:2, :2] = kf.P[:2, :2]
             pc[2, 2] = pc[3, 3] = pc[4, 4] = 1e3
             pc[5, 5] = 1e3
             o.pose.covariance = pc.ravel().tolist()
             o.twist.twist.linear.x, o.twist.twist.linear.y = float(x[2]), float(x[3])
             tc = np.zeros((6, 6))
-            tc[:2, :2] = self.kf.P[2:, 2:]
+            tc[:2, :2] = kf.P[2:, 2:]
             tc[2, 2] = tc[3, 3] = tc[4, 4] = tc[5, 5] = 1e3
             o.twist.covariance = tc.ravel().tolist()
             self.pub_target.publish(o)
-            st['x'], st['y'] = round(float(x[0]), 3), round(float(x[1]), 3)
-            st['speed'] = round(self.kf.speed, 2)
 
-        st['people'] = len(tracks)
         st['ms'] = round(times['total'], 1)
         self.pub_state.publish(String(data=json.dumps(st)))
 
@@ -439,11 +299,11 @@ class PersonTrackerNode(Node):
         img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         for tr in tracks:
             b = tr.det['box'].astype(int) if tr.matched_this_frame else tr.box.astype(int)
-            is_t = tr.id == self.identity.target_id
+            is_t = tr.id == self.pipe.identity.target_id
             col = (0, 0, 255) if is_t else (0, 200, 0)
             cv2.rectangle(img, (b[0], b[1]), (b[2], b[3]), col, 3 if is_t else 1)
             label = f'{"TARGET " if is_t else ""}{tr.id}'
-            m = self.pos3d.get(tr.id)
+            m = self.pipe.pos3d.get(tr.id)
             if m is not None:
                 label += f' {m[3]:.1f}m'
             cv2.putText(img, label, (b[0] + 2, max(b[1] + 16, 16)), cv2.FONT_HERSHEY_SIMPLEX,
@@ -466,10 +326,10 @@ class PersonTrackerNode(Node):
         clear = Marker(header=header, action=Marker.DELETEALL)
         ma.markers.append(clear)
         for tr in tracks:
-            m = self.pos3d.get(tr.id)
+            m = self.pipe.pos3d.get(tr.id)
             if m is None:
                 continue
-            is_t = tr.id == self.identity.target_id
+            is_t = tr.id == self.pipe.identity.target_id
             c = Marker(header=header, ns='people', id=tr.id, type=Marker.CYLINDER)
             c.pose.position.x, c.pose.position.y, c.pose.position.z = float(m[1][0]), float(m[1][1]), 0.85
             c.pose.orientation.w = 1.0

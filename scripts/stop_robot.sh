@@ -33,6 +33,16 @@ PATTERNS=(
     analyse_motion
     publish_cloud
     compare_odom
+    # Person following (labrobot_follow). The follower is listed first among
+    # the follow nodes only for readability - every match gets SIGINT
+    # together, and the follower cancels its Nav2 goal on SIGINT.
+    person_follower
+    person_tracker
+    follow.launch
+    labrobot_bags           # ros2 bag record started by scripts/record_people.sh
+    # goal_relay.py (started with Nav2) matched none of the patterns until
+    # 2026-11-11 - its path contains neither "nav2" nor a Nav2 node name.
+    goal_relay
     # Nav2. These were missing when this file was first written, so two full sets
     # of Nav2 nodes ended up running at once: duplicate node names, and the
     # lifecycle manager then failed to configure with "Failed to change state for
@@ -63,7 +73,8 @@ PATTERNS=(
 # restarting everything costs a full relocalisation for nothing.
 if [ "${1:-}" = "--nav" ]; then
     PATTERNS=(controller_server planner_server behavior_server bt_navigator
-              velocity_smoother lifecycle_manager navigation.launch waypoint_follower)
+              velocity_smoother lifecycle_manager navigation.launch waypoint_follower
+              collision_monitor goal_relay person_follower)
 fi
 
 SELF=$$

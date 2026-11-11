@@ -89,7 +89,9 @@ def export_reid(weights_name, arch):
             self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1) * 255)
 
         def forward(self, crops):
-            x = crops.permute(0, 3, 1, 2).float()
+            # Cast BEFORE the transpose: TensorRT rejects uint8 intermediate
+            # tensors ("legalUINT8"), so the uint8 input must feed a Cast.
+            x = crops.float().permute(0, 3, 1, 2)
             x = (x - self.mean) / self.std
             f = self.m(x)
             return F.normalize(f, dim=1)
