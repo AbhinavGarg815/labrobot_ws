@@ -2628,6 +2628,21 @@ square to the base.
 | **Camera blind zone** | Camera at 0.844 m pitched 15° down cannot see close, low obstacles. Needs explicit handling in the Nav2 costmap. | M4.T2 |
 | **Modbus rate ceiling** | 9600 baud is fixed in drive firmware; ~27 Hz position updates per wheel. Adequate for a 0.31 m/s robot but it is the hard limit. | accepted |
 
+### Backlog — deferred 2026-11-11 (user: "keep these for future")
+
+Parked when work moved to person following:
+
+| Item | Detail | Pointer |
+|---|---|---|
+| Fresh map v7 | All map trouble traces to old imagery and two 4-5 deg re-orientations; a fresh single-session map, kept frozen, is the recommended fix. Procedure: OPERATOR_GUIDE section 4. | Problems 49, 50; M5.T5 |
+| Lifelong mapping root cause | Each session that added nodes pivoted the map 4-5 deg about its root. Drift guard now refuses such a session, but the cause (odometry slip in 360 deg spins vs closure heading bias) is unknown; needs an instrumented live session. Bringup with `--localization` until then. | Problem 50 |
+| RTAB-Map localisation bias on v6_clean | ~25 cm / 7-9 deg off in the middle of the lab right after a correct, two-method localisation; visual closures to 27 Oct nodes disagree with the scan match and view check. | M5.T5 |
+| Visual closures with 0 inliers | 734/755 candidates against old imagery; likely appearance change, not missing 3D. | Problem 50 |
+| Ring-match corridor alias | Upper-left (-1.2, 5.0) and upper-right (2.8, 5.6) attract scans; free-endpoint penalty tested offline, helps true poses but not this alias; not deployed. | M5.T4 |
+| Blocked-waypoint test on hardware | APPROACHED/BLOCKED logic tested offline only. | M5.T3 |
+| Goal relay live check | Built and tested standalone; verify at next bringup with display frame `odom`. | Goal relay entry |
+| Battery voltage monitoring, wheel slip | Offered earlier, not started. | Open risks |
+
 ---
 
 ## 9. Conventions
