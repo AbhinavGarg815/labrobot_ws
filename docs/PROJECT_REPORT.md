@@ -996,6 +996,39 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 50 — every session that added nodes re-oriented the map ~4-5 deg; drift guard (2026-11-11)
+
+Old-node drift between successive map files (tools/map_drift.py, rigid fit
+over the nodes present in both):
+
+| step | old nodes | rotation | median / max shift |
+|---|---|---|---|
+| v6 -> v6_clean (27 Oct trim) | 699 | +0.53 deg | 3.6 / 16.7 cm |
+| v6_clean -> inconsistent (29 Oct; Admin not rewritten, unclean stop) | 709 | 0.00 | 0 / 0 |
+| inconsistent -> recovered (rtabmap-recovery re-optimised the 29 Oct session, 183 nodes) | 700 | **-4.90 deg** | 33.5 / 71.8 cm |
+| recovered -> 16:25 session (31 Oct) | 883 | **+3.87 deg** | 15.9 / 51.4 cm |
+
+So the map restored in Problem 49 is itself -4.9 deg from the original v6
+frame; the 31 Oct session swung it most of the way back. The root (node 1)
+and nodes near it never move: the map PIVOTS about the area round its root
+(fixed point (0.55, 0.01)) - a heading error from the new constraints spread
+through the old graph. Link weights give no obvious culprit: odometry
+neighbour links sigma 3.2 cm / 1.8 deg (old and new alike), visual closures
+5-8 cm / 4.6-4.7 deg. Not yet identified (odometry slip during 360 deg
+spins, or closure heading bias); needs an instrumented live session.
+Also checked: no map file has ever stored 3D feature positions (Feature
+depth_x/y/z all 0), including those where closures to the same old nodes
+succeeded - normal with RGBD/LoopClosureReextractFeatures; NOT the cause of
+the 0-inlier rejections. Likely cause of those: the restored map holds only
+27/29 Oct imagery; on 1 Nov the only accepted closures were to 31 Oct nodes.
+Guard: `scripts/stop_robot.sh` now runs `tools/map_drift.py` against the
+previous `.lastclean` after every clean close. Limits: rigid rotation 1.5 deg,
+median shift 8 cm (normal edit: 0.53 deg / 3.6 cm; the bad sessions 3.9-4.9
+deg / 16-34 cm). DISTORTED -> the new map is moved to
+`docs/maps/backup/distorted_<time>.db` and the known-good map restored, so
+saved waypoints stay valid. Tested on copies of the real files: all four
+pairs classified as in the table; both branches exercised.
+
 ### M5.T4 — missions on the restored map, person-confirmed start (2026-11-01)
 
 Localisation (map frozen, `--localization`): auto_localise on the restored

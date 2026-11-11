@@ -161,9 +161,28 @@ if [ "$rtabmap_was_running" -eq 1 ]; then
         # loaded words (356548)" - the vocabulary is only fully written on a
         # clean close) and refuse to load. This copy always loads.
         DB="$HOME/.ros/rtabmap.db"
+        # A clean close is not enough: a lifelong session can re-optimise the
+        # saved map and bend it (Problem 50: -4.9 and +3.9 deg). Compare the
+        # old nodes with the previous known-good copy before replacing it; a
+        # distorted map is set aside and the known-good one restored.
+        DRIFT="$(dirname "$0")/../tools/map_drift.py"
         if [ -f "$DB" ]; then
-            cp "$DB" "$DB.lastclean.tmp" && mv "$DB.lastclean.tmp" "$DB.lastclean" && sync \
-                && echo "  known-good copy saved: $DB.lastclean"
+            rc=0
+            if [ -f "$DB.lastclean" ] && [ -f "$DRIFT" ]; then
+                python3 "$DRIFT" "$DB.lastclean" "$DB" --quiet; rc=$?
+            fi
+            if [ "$rc" -eq 2 ]; then
+                aside="$HOME/ros2_ws/docs/maps/backup/distorted_$(date +%Y%m%d_%H%M%S).db"
+                mv "$DB" "$aside" && cp "$DB.lastclean" "$DB" && sync
+                echo "  WARNING: this session DISTORTED the saved map - it was set aside as"
+                echo "           $aside"
+                echo "           and the previous known-good map restored. Saved waypoints stay valid."
+            elif [ "$rc" -eq 0 ]; then
+                cp "$DB" "$DB.lastclean.tmp" && mv "$DB.lastclean.tmp" "$DB.lastclean" && sync \
+                    && echo "  known-good copy saved: $DB.lastclean"
+            else
+                echo "  WARNING: map drift check failed (exit $rc) - known-good copy NOT updated"
+            fi
         fi
     fi
 fi
