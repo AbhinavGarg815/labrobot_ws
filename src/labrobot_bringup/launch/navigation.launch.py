@@ -12,7 +12,9 @@
 #   odom -> base_footprint   the EKF (localization.launch.py)
 #   /map                     RTAB-Map's occupancy grid -> global costmap static layer
 #   obstacles                D435i point cloud -> voxel/obstacle layers
-#   /cmd_vel                 Nav2 -> velocity_smoother -> diff_drive_controller
+#   /cmd_vel                 Nav2 -> velocity_smoother -> collision_monitor
+#                            -> diff_drive_controller (collision_monitor:=false
+#                            connects the smoother straight to the drive)
 #
 # AMCL is NOT used: it needs a LaserScan this robot does not have, and RTAB-Map
 # already publishes map -> odom from visual place recognition.
@@ -21,7 +23,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -30,11 +32,24 @@ def generate_launch_description():
     pkg = get_package_share_directory('labrobot_bringup')
     default_params = os.path.join(pkg, 'config', 'nav2_params.yaml')
 
-    params_file = LaunchConfiguration('params_file')
-    autostart = LaunchConfiguration('autostart')
-
     declare_params = DeclareLaunchArgument('params_file', default_value=default_params)
     declare_autostart = DeclareLaunchArgument('autostart', default_value='true')
+    declare_cm = DeclareLaunchArgument(
+        'collision_monitor', default_value='true',
+        description='Put nav2_collision_monitor between the velocity smoother and the '
+                    'drive (config/collision_monitor.yaml). false = previous wiring.')
+    return LaunchDescription([declare_params, declare_autostart, declare_cm,
+                              OpaqueFunction(function=_nodes)])
+
+
+def _nodes(context):
+    pkg = get_package_share_directory('labrobot_bringup')
+    params_file = LaunchConfiguration('params_file')
+    autostart = LaunchConfiguration('autostart')
+    use_cm = LaunchConfiguration('collision_monitor').perform(context).lower() in ('true', '1')
+    # Where the smoother's output goes: into the collision monitor, or (old
+    # wiring) straight to the drive.
+    smoothed = '/cmd_vel_smoothed' if use_cm else '/diff_drive_controller/cmd_vel_unstamped'
 
     # diff_drive_controller subscribes to cmd_vel_unstamped, so the smoother's
     # output is remapped onto it. Nav2's controller writes /cmd_vel, the smoother
@@ -74,24 +89,26 @@ def generate_launch_description():
         Node(package='nav2_velocity_smoother', executable='velocity_smoother',
              name='velocity_smoother', output='screen', parameters=[params_file],
              remappings=[('cmd_vel', 'cmd_vel_nav'),
-                         ('cmd_vel_smoothed',
-                          '/diff_drive_controller/cmd_vel_unstamped')]),
+                         ('cmd_vel_smoothed', smoothed)]),
         # Sequences NavigateToPose goals through a list of waypoints
         # (FollowWaypoints action); used by scripts/waypoints.py.
         Node(package='nav2_waypoint_follower', executable='waypoint_follower',
              name='waypoint_follower', output='screen', parameters=[params_file]),
-        # The lifecycle manager must list every managed node, in start order.
-        # A node missing here simply never activates, and the symptom is Nav2
-        # accepting a goal and then doing nothing at all.
+    ]
+    # The lifecycle manager must list every managed node, in start order.
+    # A node missing here simply never activates, and the symptom is Nav2
+    # accepting a goal and then doing nothing at all.
+    managed = ['controller_server', 'planner_server', 'behavior_server', 'bt_navigator',
+               'waypoint_follower', 'velocity_smoother']
+    if use_cm:
+        # Last word on every Nav2 command: stops for anything tall in a zone
+        # just ahead of the bumper (M6.T4; what it cannot see is in the YAML).
+        nodes.append(Node(package='nav2_collision_monitor', executable='collision_monitor',
+                          name='collision_monitor', output='screen',
+                          parameters=[os.path.join(pkg, 'config', 'collision_monitor.yaml')]))
+        managed.append('collision_monitor')
+    nodes.append(
         Node(package='nav2_lifecycle_manager', executable='lifecycle_manager',
              name='lifecycle_manager_navigation', output='screen',
-             parameters=[{**common,
-                          'node_names': ['controller_server',
-                                         'planner_server',
-                                         'behavior_server',
-                                         'bt_navigator',
-                                         'waypoint_follower',
-                                         'velocity_smoother']}]),
-    ]
-
-    return LaunchDescription([declare_params, declare_autostart] + nodes)
+             parameters=[{**common, 'node_names': managed}]))
+    return nodes

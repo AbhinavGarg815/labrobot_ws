@@ -95,7 +95,7 @@ controller_server:
     min_theta_velocity_threshold: 0.005
     failure_tolerance: 0.3
     progress_checker_plugin: progress_checker
-    goal_checker_plugins: [general_goal_checker]
+    goal_checker_plugins: [general_goal_checker, follow_goal_checker]
     controller_plugins: [FollowPath]
 
     progress_checker:
@@ -137,6 +137,17 @@ controller_server:
       # 0.10 rad = 5.7 deg, still ~9x the measured 0.6 deg error, so there is
       # margin without the final approach hunting for an angle it cannot hold.
       yaw_goal_tolerance: 0.10
+
+    # Person following (labrobot_follow, follow_person.xml): the goal is a
+    # stand-off point that moves with the person, so "arrived" only has to
+    # mean "close enough and facing them". With the missions' 0.10 m the
+    # robot would hunt for an exact spot behind a person who is never still
+    # (see general_goal_checker for why 0.10 already needs care).
+    follow_goal_checker:
+      stateful: true
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.25
 
     FollowPath:
       # REGULATED PURE PURSUIT, not DWB.

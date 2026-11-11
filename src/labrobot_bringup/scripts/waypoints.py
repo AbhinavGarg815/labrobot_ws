@@ -45,7 +45,7 @@ import yaml
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
-from nav2_msgs.msg import Costmap
+from nav2_msgs.msg import Costmap, SpeedLimit
 from std_msgs.msg import String
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -253,6 +253,12 @@ def cmd_go(tool, args):
 
     status = tool.create_publisher(String, '/labrobot/mission_status',
                                    QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    # Person following (labrobot_follow) sets Nav2's speed limit; if it was
+    # killed without clearing it, a mission would run at that speed. Missions
+    # always run at the configured speed: clear any limit (0 = none).
+    # Published before every leg (a single message straight after creating
+    # the publisher can be lost to discovery).
+    speed_reset = tool.create_publisher(SpeedLimit, '/speed_limit', 10)
 
     def say(text):
         print(text, flush=True)
@@ -303,6 +309,7 @@ def cmd_go(tool, args):
             note = '' if shift == 0 else f' (blocked - approaching {shift*100:.0f} cm away)'
             say(f'  [{time.time()-t_mission:6.1f}s] {k+1}/{len(route)} {name}{note}'
                 + (' - retry' if attempt == 2 else ''))
+            speed_reset.publish(SpeedLimit(percentage=False, speed_limit=0.0))
             goal = NavigateToPose.Goal(); goal.pose = pose_msg(tool, tx, ty, yaw)
             f = client.send_goal_async(goal)
             rclpy.spin_until_future_complete(tool, f, timeout_sec=15)

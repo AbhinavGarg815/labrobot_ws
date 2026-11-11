@@ -1,0 +1,79 @@
+# nav2_collision_monitor for labrobot (M6.T4): the last word on every Nav2
+# velocity command, independent of planner, controller and the person tracker.
+#
+#   velocity_smoother -> /cmd_vel_smoothed -> collision_monitor
+#                     -> /diff_drive_controller/cmd_vel_unstamped
+#
+# Humble (1.1.x) parameter names: `max_points` = the most points allowed in a
+# zone before it acts (renamed min_points later).
+#
+# WHAT IT CAN AND CANNOT SEE (geometry, PROJECT_REPORT "BLIND ZONE"):
+# the depth camera's lowest ray leaves the camera 39.8 deg below horizontal
+# at 0.844 m, so at the far edge of the stop zone (x = 0.35 m) it is already
+# 0.55 m above the floor, and at the slowdown edge (0.61 m) 0.34 m. It stops
+# the robot for legs, torsos, table edges and chair backs; it does NOT see a
+# low box, a bag or a chair seat that close. Those are only avoided because
+# the costmap remembered them from further away. Teleop
+# (teleop_twist_keyboard) bypasses it entirely.
+#
+# It fails OPEN if the cloud stops (source_timeout: data older than that is
+# ignored). The costmaps fail closed on the same cloud (expected_update_rate),
+# so a dead camera still stops navigation - see nav2_params.yaml.
+collision_monitor:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: base_footprint
+    odom_frame_id: odom
+    cmd_vel_in_topic: /cmd_vel_smoothed
+    cmd_vel_out_topic: /diff_drive_controller/cmd_vel_unstamped
+    transform_tolerance: 0.3
+    # The cloud arrives at 10-15 Hz; older than 1 s is not "now".
+    source_timeout: 1.0
+    base_shift_correction: true
+    # Keep publishing zero for this long after a stop, then go quiet (the
+    # Arduino watchdog brakes when commands stop anyway).
+    stop_pub_timeout: 2.0
+    polygons: [PolygonStop, PolygonSlow, FootprintApproach]
+    # Footprint front edge is x = 0.21, half-width 0.203. Stop zone: 14 cm in
+    # front of the bumper, 3.7 cm wider each side. 14 cm covers stopping from
+    # the 0.26 m/s controller ceiling: 0.2 s of command latency (5 cm) plus
+    # braking at the smoother's 0.4 m/s^2 (8.5 cm).
+    PolygonStop:
+      type: polygon
+      points: [0.35, 0.24, 0.35, -0.24, 0.21, -0.24, 0.21, 0.24]
+      action_type: stop
+      # A few flying depth pixels must not stop the robot; a person's leg is
+      # hundreds of points.
+      max_points: 10
+      visualize: true
+      polygon_pub_topic: collision_monitor/polygon_stop
+      enabled: true
+    PolygonSlow:
+      type: polygon
+      points: [0.61, 0.30, 0.61, -0.30, 0.21, -0.30, 0.21, 0.30]
+      action_type: slowdown
+      max_points: 10
+      slowdown_ratio: 0.5
+      visualize: true
+      polygon_pub_topic: collision_monitor/polygon_slowdown
+      enabled: true
+    # Scales the speed so that the footprint, moved along the current
+    # command, would not touch an obstacle within 1.5 s.
+    FootprintApproach:
+      type: polygon
+      action_type: approach
+      footprint_topic: /local_costmap/published_footprint
+      time_before_collision: 1.5
+      simulation_time_step: 0.1
+      max_points: 10
+      visualize: false
+      enabled: true
+    observation_sources: [depth_cloud]
+    depth_cloud:
+      type: pointcloud
+      topic: /camera/camera/depth/color/points
+      # Same height band as the costmaps (floor noise below 0.10, see
+      # nav2_params.yaml), up to the robot's height.
+      min_height: 0.10
+      max_height: 0.90
+      enabled: true
