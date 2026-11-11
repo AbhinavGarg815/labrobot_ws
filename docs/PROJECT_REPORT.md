@@ -1020,6 +1020,20 @@ Result:
 - Shown both in Foxglove (`tools/show_pose_candidates.py`, MarkerArray on
   /labrobot/pose_candidates): the **user judged the scan-match pose (green)
   more correct**.
+Direct Foxglove goals on this map (user, /goal_pose, Nav2 only - the mission
+gate's view check refused and skipping it was not permitted):
+- 2 goals FAILED: published in the **odom** frame (the 3D panel's display
+  frame) with the click time as stamp; the planner re-transforms the goal
+  odom->map at that stamp on every replan, and after ~10 s the TF buffer no
+  longer reaches it ("extrapolation into the past ... earliest data 40 s
+  later"). Fix: display frame `map`. TODO: a relay converting /goal_pose to
+  map once on arrival (needs a Nav2 restart).
+- With display frame `map`: 3/3 SUCCEEDED - 1.9 m in 44 s (10 cm), 4.8 m to
+  the upper area in 103 s (14 cm, view check there 100% / 0%), 4.3 m back in
+  94 s (9 cm; one failed plan and two sub-second "collision ahead" stops,
+  each recovered by Nav2; nothing in the costmap or depth at the snapshot).
+Distances are in RTAB-Map's frame; the 25 cm bias seen in the middle area
+did not appear in the upper area.
 So on the old map RTAB-Map's visual localisation, against 27 Oct imagery, is
 biased ~25 cm here; geometry and the user agree with each other. Camera
 extrinsics are an unlikely cause (yaw measured +0.57 deg; camera 1.8 cm from
