@@ -56,8 +56,9 @@ for _ in $(seq 1 60); do
     if grep -qE "Managed nodes are active" "$NAV_LOG"; then
         # Startup localisation: spins in place until the pose is trusted, then
         # stays up publishing /labrobot/localised (nav_goal.py requires it).
+        MAPMODE=$([ -n "$THEN_MAPPING" ] && echo lifelong || echo frozen)   # read by scripts/localise.sh
         if [ "$AUTOLOC" = "0" ]; then
-            status "READY robot=$ROBOT_LOG nav=$NAV_LOG (no auto-localise)"; exit 0
+            status "READY mode=$MAPMODE robot=$ROBOT_LOG nav=$NAV_LOG (no auto-localise)"; exit 0
         fi
         LOC_LOG=docs/logs/nav_${STAMP}_autoloc.log
         # Exactly one auto_localise: a leftover instance keeps publishing its
@@ -68,7 +69,7 @@ for _ in $(seq 1 60); do
         FIRST_ID=$(grep -m1 -oE "rtabmap \([0-9]+\):" "$ROBOT_LOG" | grep -oE "[0-9]+")
         setsid ros2 run labrobot_bringup auto_localise.py ${FIRST_ID:+--saved-below $FIRST_ID} $THEN_MAPPING \
             > "$LOC_LOG" 2>&1 < /dev/null &
-        status "READY robot=$ROBOT_LOG nav=$NAV_LOG autoloc=$LOC_LOG (robot spins to localise)"
+        status "READY mode=$MAPMODE robot=$ROBOT_LOG nav=$NAV_LOG autoloc=$LOC_LOG (robot spins to localise)"
         exit 0
     fi
     grep -qE "Aborting bringup" "$NAV_LOG" && { status "FAILED: nav2 bringup aborted"; exit 1; }

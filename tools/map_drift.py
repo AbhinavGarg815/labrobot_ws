@@ -36,7 +36,22 @@ def opt_poses(path):
     return dict(zip(ids.tolist(), P))
 
 
+def same_map(before, after):
+    """True if AFTER continues BEFORE. A brand-new map also numbers its nodes
+    from 1, so shared ids alone mean nothing: compare the capture time of the
+    first few nodes, which is fixed when a node is created."""
+    stamps = []
+    for path in (before, after):
+        db = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+        stamps.append(dict(db.execute('SELECT id, stamp FROM Node ORDER BY id LIMIT 5').fetchall()))
+    shared = set(stamps[0]) & set(stamps[1])
+    return bool(shared) and all(abs(stamps[0][i] - stamps[1][i]) < 1e-3 for i in shared)
+
+
 def compare(before, after):
+    if not same_map(before, after):
+        return {'ok': True, 'new_map': True, 'common': 0,
+                'why': 'a different map (first nodes recorded at other times) - nothing to compare'}
     A, B = opt_poses(before), opt_poses(after)
     common = sorted(set(A) & set(B))
     if len(common) < 10:
