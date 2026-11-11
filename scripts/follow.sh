@@ -43,8 +43,11 @@ for f in ~/labrobot_models/engines/${DET}_480x640_fp16.engine ~/labrobot_models/
     [[ -f "$f" ]] || { echo "missing $f - build it: tools/build_follow_models.sh --engines-only ${DET} ${REID}"; exit 1; }
 done
 
+# ROS's setup files read variables that may be unset: not under set -u.
+set +u
 source /opt/ros/humble/setup.bash
 source install/setup.bash
+set -u
 LOG=docs/logs/follow_$(date +%H%M).log
 mkdir -p docs/logs
 
