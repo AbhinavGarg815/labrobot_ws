@@ -16,6 +16,14 @@ What is taken from the literature, and what is changed for this robot:
   and it does not fail on texture-poor views. Translation is ignored: at
   0.26 m/s a person 1.5 m away shifts < 1 px per frame from it.
 
+* Depth gate (this robot has depth; BoT-SORT does not use it): a detection
+  may join a track only if its ground position (det['xy'], odom) is within
+  reach of the track's last 3D position: gate_base + gate_speed * dt +
+  gate_range_k * range^2 (depth noise grows with range squared). Found on
+  the first recording (people1, 97 s): a person walking in front of a seated
+  one took over the seated person's track - box overlap alone, range jumping
+  2.42 -> 1.57 m in one frame. Detections or tracks without 3D are not gated.
+
 Long-term identity (re-identification after the target was gone for
 seconds) is NOT the tracker's job; it lives in identity.py. The tracker keeps
 lost tracks for `track_buffer_s` so short occlusions do not change the id.
@@ -135,11 +143,20 @@ class Track:
         self.feat = None
         self.feat_alpha = feat_alpha
         self.matched_this_frame = True
+        self.xy = None            # last ground position (odom) and its time
+        self.xy_t = None
         self._update_feat(det)
+        self._update_xy(det, stamp)
 
     @property
     def box(self):
         return cxcywh_to_xyxy(self.mean[:4])
+
+    def _update_xy(self, det, stamp):
+        if det.get('xy') is not None:
+            self.xy = np.asarray(det['xy'], float)
+            self.xy_t = stamp
+            self.xy_range = float(det.get('range', 0.0))
 
     def _update_feat(self, det):
         f = det.get('feat')
@@ -170,13 +187,15 @@ class Track:
         self.det = det
         self.matched_this_frame = True
         self._update_feat(det)
+        self._update_xy(det, stamp)
 
 
 class PersonTracker:
     def __init__(self, high_thresh=0.5, low_thresh=0.15, new_track_thresh=0.55,
                  match_thresh=0.8, second_match_thresh=0.5, unconfirmed_thresh=0.7,
                  proximity_thresh=0.5, appearance_thresh=0.25,
-                 track_buffer_s=3.0, min_hits=3, feat_alpha=0.9):
+                 track_buffer_s=3.0, min_hits=3, feat_alpha=0.9,
+                 gate_base_m=0.4, gate_speed_mps=1.5, gate_range_k=0.03):
         self.high_thresh = high_thresh
         self.low_thresh = low_thresh
         self.new_track_thresh = new_track_thresh
@@ -188,10 +207,28 @@ class PersonTracker:
         self.track_buffer_s = track_buffer_s
         self.min_hits = min_hits
         self.feat_alpha = feat_alpha
+        self.gate_base = gate_base_m
+        self.gate_speed = gate_speed_mps
+        self.gate_range_k = gate_range_k
         self.kf = BoxKalman()
         self.tracks = []
 
     # -- cost -------------------------------------------------------------
+    def _depth_gate(self, cost, tracks, dets, stamp):
+        """Forbid (cost 1e5) pairs whose ground positions are out of reach."""
+        for i, t in enumerate(tracks):
+            if t.xy is None:
+                continue
+            for j, d in enumerate(dets):
+                if d.get('xy') is None:
+                    continue
+                r = max(float(d.get('range', 0.0)), t.xy_range)
+                reach = (self.gate_base + self.gate_speed * max(stamp - t.xy_t, 0.0)
+                         + self.gate_range_k * r * r)
+                if np.linalg.norm(np.asarray(d['xy']) - t.xy) > reach:
+                    cost[i, j] = 1e5
+        return cost
+
     def _fused_cost(self, tracks, dets):
         iou_d = 1.0 - iou_matrix([t.box for t in tracks], [d['box'] for d in dets])
         # ByteTrack's score fusion: weak detections look a bit further away.
@@ -245,7 +282,9 @@ class PersonTracker:
         unconfirmed = [t for t in self.tracks if not t.confirmed]
 
         # 1. confident detections vs all confirmed tracks (tracked + lost)
-        matches, um_t, um_d = self._match(self._fused_cost(confirmed, high), self.match_thresh)
+        matches, um_t, um_d = self._match(
+            self._depth_gate(self._fused_cost(confirmed, high), confirmed, high, stamp),
+            self.match_thresh)
         for ti, di in matches:
             confirmed[ti].update(high[di], stamp, self.min_hits)
         rem_tracks = [confirmed[i] for i in um_t if confirmed[i].state == TRACKED]
@@ -253,7 +292,9 @@ class PersonTracker:
 
         # 2. weak detections vs still-unmatched, currently tracked tracks; IoU only
         if rem_tracks and low:
-            iou_d = 1.0 - iou_matrix([t.box for t in rem_tracks], [d['box'] for d in low])
+            iou_d = self._depth_gate(
+                1.0 - iou_matrix([t.box for t in rem_tracks], [d['box'] for d in low]),
+                rem_tracks, low, stamp)
             m2, um_t2, _ = self._match(iou_d, self.second_match_thresh)
             for ti, di in m2:
                 rem_tracks[ti].update(low[di], stamp, self.min_hits)
@@ -264,8 +305,9 @@ class PersonTracker:
             t.state = LOST
 
         # 3. unconfirmed tracks vs remaining confident detections
-        m3, um_u, um_d3 = self._match(self._fused_cost(unconfirmed, rem_high),
-                                      self.unconfirmed_thresh)
+        m3, um_u, um_d3 = self._match(
+            self._depth_gate(self._fused_cost(unconfirmed, rem_high), unconfirmed, rem_high, stamp),
+            self.unconfirmed_thresh)
         for ti, di in m3:
             unconfirmed[ti].update(rem_high[di], stamp, self.min_hits)
         for i in um_u:

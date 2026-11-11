@@ -996,6 +996,45 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### M6.T2 — first recording, offline: tracking and re-identification (2026-11-11)
+
+Bag `~/labrobot_bags/people1` (118 s, 14.9 Hz colour + aligned depth, robot
+still, open floor ahead; the user walked the script in OPERATOR_GUIDE 3.4;
+one other person seated at the right image edge, 2.4 m). Replayed with
+`tools/eval_follow_bag.py --lock-at 15 --video` (same pipeline code as the
+live node; 39 ms/frame mean, 44 ms p95).
+- **Detection on legs-only views works**: the user detected at every mark
+  including 1.08 m and 1.14 m (shins to belt), with hip/knee keypoints; back
+  and side-on views detected.
+- **Problem 52 - a track jumped from the seated person to the walker** (97 s,
+  first replay): the seated person's box is always cut by the image edge, so
+  never "clean" -> no appearance; the walker's box overlapped it while the
+  seated detection dropped out, and IoU alone moved the track (range 2.42 ->
+  1.57 m in 67 ms). Fix: depth gate in the tracker's association
+  (tracker.py: reach = 0.4 m + 1.5 m/s x dt + 0.03 x range^2), detections
+  measured in 3D BEFORE association. Unit test reproduces it without the gate
+  (negative control) and passes with it.
+- **Re-identification after the fix**: locked on the user at 15 s; the
+  user's track broke three times (left/right image edges, leaving the view
+  ~14 s) and was **re-identified each time on the right person** (tracks 5,
+  8, 10 at 70.1 / 83.1 / 97.7 s); the seated person (tracks 1, 3, 6, 12) was
+  **never** taken as the target. Target tracked in 1144 of 1530 frames after
+  the lock (the rest: out of view by the script, or re-acquiring).
+- Range against tape marks (as overlaid, camera-frame range at the time):
+  3.10 / ~2.14 / 1.34 / 1.08 m at the 3.0 / 2.0 / 1.2 / 1.0 m marks, i.e.
+  +0.08 to +0.14 m. Range is now reported as FLOOR distance from the camera;
+  the error must be re-measured with that (next session), then the 0.10 m
+  body-centre offset checked.
+- Not yet tested: a second person crossing (none took part), the follower
+  on hardware, the collision monitor live (needs a bringup).
+
+**Next session, in order:** re-measure range error on people1 (floor range);
+next bringup brings up the collision monitor, follow goal checker and the
+auto_localise CPU fix - check `check_system.py`; re-localise
+(`scripts/localise.sh`, the robot was turned by hand); `scripts/follow.sh
+--dry-run` with a real person; then the first slow driving test (0.06 m/s,
+user present).
+
 ### M6.T1 — perception on the GPU: engines, parity, CPU (2026-11-11)
 
 **Environment (M6.T0).** Nothing system-wide changed except

@@ -250,3 +250,37 @@ def test_identity_unclean_views_not_learned():
                          alive_ids={1})
         assert ev == 'occluded'
     assert len(idn.short) == n0
+
+
+def _pass_in_front(use_gate):
+    """people1 (97 s): seated person B at 2.42 m, box cut by the image edge
+    (never clean -> no appearance). Walker A comes in from the right at
+    1.6 m, overlapping B's box while B's detection drops out for a few
+    frames. Without the depth gate B's track jumps onto A."""
+    tr = PersonTracker() if use_gate else PersonTracker(gate_base_m=1e9)
+    seen = {}
+    for i in range(60):
+        t = i / 15
+        db = {'box': np.array([485, 38, 640, 324.]), 'score': 0.88, 'feat': None,
+              'clean': False, 'xy': np.array([2.42, -1.0]), 'range': 2.42, 'who': 'B'}
+        dets = []
+        if not (30 <= i < 36):                 # B occluded by A for 6 frames
+            dets.append(db)
+        if i >= 28:
+            cx = 600 - 8 * (i - 28)
+            dets.append({'box': np.array([cx - 75, 0, cx + 75, 440.]), 'score': 0.85,
+                         'feat': None, 'clean': False, 'xy': np.array([1.57, -0.5]),
+                         'range': 1.6, 'who': 'A'})
+        for o in tr.update(dets, t):
+            if o.matched_this_frame:
+                seen.setdefault(o.id, set()).add(o.det['who'])
+    return seen
+
+
+def test_depth_gate_stops_track_takeover():
+    without = _pass_in_front(False)
+    assert any(len(v) > 1 for v in without.values()), \
+        f'negative control: without the gate a track should jump, got {without}'
+    Track._next_id = 1
+    withg = _pass_in_front(True)
+    assert all(len(v) == 1 for v in withg.values()), withg

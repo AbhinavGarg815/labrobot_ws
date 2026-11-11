@@ -77,15 +77,19 @@ class PersonPipeline:
         times['reid'] = (time.perf_counter() - t1) * 1000
 
         t1 = time.perf_counter()
+        # 3D per detection BEFORE association: the tracker's depth gate uses it
+        for d in dets:
+            m = self.measure(d, depth, K, R, tcam, w, h)
+            d['m3d'] = m
+            if m is not None:
+                d['xy'], d['range'] = m[0], m[2]
         H = rotation_homography(K, R.T @ self.prev_R) if self.prev_R is not None else None
         self.prev_R = R
         tracks = self.tracker.update(dets, ts, H)
         self.pos3d = {k: v for k, v in self.pos3d.items() if ts - v[0] < 3.0}
         for tr in tracks:
-            if tr.matched_this_frame:
-                m = self.measure(tr.det, depth, K, R, tcam, w, h)
-                if m is not None:
-                    self.pos3d[tr.id] = (ts,) + m
+            if tr.matched_this_frame and tr.det.get('m3d') is not None:
+                self.pos3d[tr.id] = (ts,) + tr.det['m3d']
         times['track'] = (time.perf_counter() - t1) * 1000
 
         self._apply_selection(tracks, ts)
@@ -110,7 +114,9 @@ class PersonPipeline:
         s_along, s_across = geo.measurement_cov_cam(p_cam, K[0, 0])
         cov = geo.ground_cov(ray / rng, s_along, s_across)
         bearing = math.atan2(-p_cam[0], p_cam[2])     # + = to the camera's left
-        return p_odom[:2], cov, float(math.hypot(p_cam[0], p_cam[2])), bearing
+        # range = distance ON THE FLOOR from the camera (not along the tilted
+        # optical axis), which is what tape marks and the stand-off mean
+        return p_odom[:2], cov, rng, bearing
 
     def _plausible(self, tr, ts):
         """Re-acquisition gate: could the target have walked to this track?"""
