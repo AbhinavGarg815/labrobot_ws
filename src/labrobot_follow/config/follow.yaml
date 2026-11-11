@@ -32,5 +32,5 @@ person_follower:
     seed_views: 4                  # appearance views to collect before moving
     goal_free_cost: 128            # local costmap_raw cost (0-255) a goal cell must be under:
                                    # 128 = ~0.34 m from an obstacle with this inflation
-    tf_grace_s: 2.0                # odom->base_footprint may be missing this long
+    tf_grace_s: 2.0                # robot pose (/odometry/filtered) may be missing this long
     rate_hz: 5.0

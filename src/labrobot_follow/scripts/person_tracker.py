@@ -34,7 +34,17 @@ Topics
        /labrobot/follow_markers visualization_msgs/MarkerArray (while subscribed)
 """
 
-import json
+import os
+
+# One OpenBLAS thread, set BEFORE numpy loads. With the default pool (one per
+# core) every tiny 3x3 matrix product woke the pool and its threads then
+# spin-waited: the tracker used 121% of a core with nobody in view; with one
+# thread, 28% (measured 2026-11-11, M6.T1). Nothing here is big enough to
+# gain from BLAS threads.
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+
+import json  # noqa: E402
 import math
 import time
 
@@ -55,6 +65,7 @@ from vision_msgs.msg import Detection3D, Detection3DArray, ObjectHypothesisWithP
 from visualization_msgs.msg import Marker, MarkerArray
 
 from labrobot_follow.detector import PoseDetector, ReidEncoder
+from labrobot_follow.odom_pose import OdomPoseBuffer, compose_camera, yaw_of
 from labrobot_follow.pipeline import PersonPipeline
 
 
@@ -124,8 +135,18 @@ class PersonTrackerNode(Node):
             reid_gate_base_m=g('reid_gate_base_m'), reid_gate_speed_mps=g('reid_gate_speed_mps'),
             reid_thresh=g('reid_thresh'), reid_margin=g('reid_margin'))
 
+        # Robot pose from the EKF's odometry, not a TF listener (19% of a core
+        # on its own - odom_pose.py). TF is listened to only while something
+        # needs it: the static camera mount at startup, and a clicked point.
+        self.odom = OdomPoseBuffer()
+        self.create_subscription(Odometry, '/odometry/filtered', self.on_odom, 50)
         self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.tf_listener = None
+        self.mount = None             # (R, t) base_footprint <- camera optical frame
+        self.cam_frame = None
+        self.pending_click = None     # (msg, time first tried)
+        self.tf_listen(True)
+        self.create_timer(0.5, self.tf_tasks)
 
         self.K = None
         self.last_debug = 0.0
@@ -173,32 +194,68 @@ class PersonTrackerNode(Node):
         elif words[0] in ('release', 'reset'):
             self.pipe.release()
 
+    def on_odom(self, msg):
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        self.odom.add(Time.from_msg(msg.header.stamp).nanoseconds * 1e-9, p.x, p.y,
+                      yaw_of(q.x, q.y, q.z, q.w))
+
     def on_click(self, msg):
-        try:
-            tf = self.tf_buffer.lookup_transform(self.odom_frame, msg.header.frame_id, Time(),
-                                                 timeout=Duration(seconds=0.2))
-        except TransformException as e:
-            self.get_logger().warn(f'clicked point not usable: {e}')
+        if msg.header.frame_id == self.odom_frame:
+            self.pipe.select_point([msg.point.x, msg.point.y])
             return
-        R = quat_to_rot(tf.transform.rotation)
-        t = tf.transform.translation
-        p = R @ np.array([msg.point.x, msg.point.y, msg.point.z]) + [t.x, t.y, t.z]
-        self.pipe.select_point(p[:2])
+        self.pending_click = (msg, time.monotonic())
+        self.tf_listen(True)
+        self.tf_tasks()
+
+    def tf_listen(self, on):
+        if on and self.tf_listener is None:
+            self.tf_listener = TransformListener(self.tf_buffer, self)
+        elif not on and self.tf_listener is not None:
+            self.tf_listener.unregister()
+            self.tf_listener = None
+
+    def tf_tasks(self):
+        """Static mount lookup and clicked points; then stop listening."""
+        if self.mount is None and self.cam_frame is not None:
+            try:
+                tf = self.tf_buffer.lookup_transform(self.base_frame, self.cam_frame, Time())
+                r, t = tf.transform.rotation, tf.transform.translation
+                self.mount = (quat_to_rot(r), np.array([t.x, t.y, t.z]))
+                self.get_logger().info(f'camera mount {self.base_frame} -> {self.cam_frame}: '
+                                       f't = {np.round(self.mount[1], 3).tolist()}')
+            except TransformException:
+                pass
+        if self.pending_click is not None:
+            msg, t0 = self.pending_click
+            try:
+                tf = self.tf_buffer.lookup_transform(self.odom_frame, msg.header.frame_id, Time())
+                R = quat_to_rot(tf.transform.rotation)
+                t = tf.transform.translation
+                p = R @ np.array([msg.point.x, msg.point.y, msg.point.z]) + [t.x, t.y, t.z]
+                self.pipe.select_point(p[:2])
+                self.pending_click = None
+            except TransformException as e:
+                if time.monotonic() - t0 > 3.0:
+                    self.get_logger().warn(f'clicked point not usable: {e}')
+                    self.pending_click = None
+        if self.mount is not None and self.pending_click is None:
+            self.tf_listen(False)
 
     def event(self, text):
         self.get_logger().info(f'target: {text}')
         self.pub_event.publish(String(data=text))
 
     # ------------------------------------------------------------------ frame
-    def lookup_cam(self, frame_id, stamp):
+    def lookup_cam(self, frame_id, ts):
         """odom <- camera optical frame at the image time: (R, t) or None."""
-        try:
-            tf = self.tf_buffer.lookup_transform(self.odom_frame, frame_id, stamp,
-                                                 timeout=Duration(seconds=0.05))
-        except TransformException:
+        if self.cam_frame is None:
+            self.cam_frame = frame_id
+        if self.mount is None:
             return None
-        t = tf.transform.translation
-        return quat_to_rot(tf.transform.rotation), np.array([t.x, t.y, t.z])
+        pose = self.odom.at(ts)
+        if pose is None:
+            return None
+        return compose_camera(pose, *self.mount)
 
     def on_frame(self, rgb_msg, depth_msg):
         if self.K is None:
@@ -216,7 +273,7 @@ class PersonTrackerNode(Node):
         depth = np.frombuffer(depth_msg.data, np.uint16).reshape(
             depth_msg.height, depth_msg.step // 2)[:, :depth_msg.width]
 
-        cam = self.lookup_cam(rgb_msg.header.frame_id, stamp)
+        cam = self.lookup_cam(rgb_msg.header.frame_id, ts)
         if cam is None:
             self.dropped_tf += 1
             return

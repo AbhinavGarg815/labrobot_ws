@@ -7,7 +7,7 @@ look after the map. Every command here is run **on the Jetson, from
 For the engineering history (why things are the way they are, every problem
 and fix) see `docs/PROJECT_REPORT.md`. This guide is kept up to date with it.
 
-Last updated: 2026-11-11.
+Last updated: 2026-11-11 (person following added, section 3.4).
 
 ---
 
@@ -82,7 +82,7 @@ starved the robot's CPU once); the compressed image is.
    ```
 
    - `[LOCALISED] ...` — done, go to 3.2.
-   - `NOT localised after 4 viewpoints` or `only turned N deg` — see 3.5.
+   - `NOT localised after 4 viewpoints` or `only turned N deg` — see 3.6.
 
 Without `--localization` the map keeps updating as the robot drives
 ("lifelong mapping"). That is **paused** for now: it has twice rotated the map
@@ -91,7 +91,7 @@ by 4-5° (see section 6.4).
 ### 3.2 Check the robot is where the map says
 
 In Foxglove (display frame `map`), the robot model should sit where the real
-robot is and face the same way. If it is clearly off, re-localise (3.5) before
+robot is and face the same way. If it is clearly off, re-localise (3.6) before
 driving.
 
 ### 3.3 Drive: three ways
@@ -124,7 +124,7 @@ Other mission options: `--return` (come back to the start), `--loop 3`
 
 Before it moves, a mission checks that the robot is localised and that the
 camera view matches the map. If not, it prints
-`NOT starting the mission` and the reason; see 3.5.
+`NOT starting the mission` and the reason; see 3.6.
 
 **c) Relative moves** (handy for small tests):
 
@@ -145,7 +145,69 @@ ros2 run labrobot_bringup waypoints.py delete door
 Waypoints live in `docs/maps/waypoints.yaml`. **They belong to the map they
 were picked on**: after building a new map, pick them again.
 
-### 3.4 Stop and power off
+### 3.4 Person following (in development - see the status line below)
+
+**Status 2026-11-11:** perception and the follower are built and tested
+without motion (dry run). Driving tests have not been done yet: run it only
+with `--dry-run` or `--tracker-only` until this line says otherwise.
+
+The robot follows one person, keeping **1.2 m** behind them, and stops if they
+come closer than **0.8 m**. It is slow (test cap 0.06 m/s): **walk slowly and
+stop to let it catch up**. It sees only in front, ~56 deg wide, and at 1.2 m
+only your legs up to the belt.
+
+**Start** (stack already up and localised, 3.1):
+
+```bash
+scripts/follow.sh --dry-run          # robot does NOT move: shows goals and plans
+scripts/follow.sh --tracker-only     # perception only: who is seen, with ids
+scripts/follow.sh                    # FOLLOWS - the robot moves after "start"
+scripts/follow.sh --max-speed 0.10   # raise the speed cap (default 0.06 m/s)
+```
+
+**Foxglove** (once): a Publish panel on `/labrobot/follow_cmd`, schema
+`std_msgs/msg/String`, with buttons `{"data": "start"}`, `{"data": "stop"}`,
+`{"data": "release"}`. Show `/labrobot/follow_status` (what it is doing),
+the Image panel `/labrobot/follow_debug/compressed` (boxes: **red = the
+person it follows**, green = others, with their ids and distance) and, in the
+3D panel, `/labrobot/follow_markers`, `/labrobot/follow_goal` and
+`/labrobot/follow_plan`.
+
+**Choosing who to follow:**
+- stand **1-3.5 m in front of the robot, within ~20 deg of straight ahead**,
+  nearest of anyone there, and press **start**. It collects a few views of you
+  (about a second) before moving;
+- or pick someone by id: publish `{"data": "select 3"}` (the id is on their box
+  in the debug image), then **start**;
+- or in the 3D panel use *Publish point* on topic `/clicked_point` near the
+  person's marker, then **start**.
+
+**What the status means** (`/labrobot/follow_status`):
+
+| Status | Meaning |
+|---|---|
+| `IDLE` | not following; waiting for start |
+| `ACQUIRE` | locking on to the person in front |
+| `FOLLOW: person N at D m ...` | following; the speed shown adapts to how fast you walk |
+| `FOLLOW: holding - too close` | you are within 0.8 m: it waits |
+| `FALLING BEHIND, please wait` | you are more than 5 m away: stop and let it catch up |
+| `LOST` | it cannot see you: waits 2 s, then drives to where you were last seen |
+| `SEARCH` | turning a full circle, starting towards where you went |
+| `WAIT` | watching for you for 60 s |
+| `IDLE: target lost` | gave up; press start again |
+
+It only takes you back as the target if it **recognises your appearance**
+(re-identification), never just because someone is standing where you were.
+
+**Stop:** **stop** in Foxglove, Ctrl-C in the follow terminal, or
+`scripts/stop_robot.sh`. **release** makes it forget the person.
+
+**Recording for tests** (robot does not move):
+`scripts/record_people.sh NAME 90` records camera + depth + TF for 90 s to
+`~/labrobot_bags/NAME` (~2 GB per 90 s); `python3 tools/eval_follow_bag.py
+~/labrobot_bags/NAME --lock-at 3 --video` replays it through the tracker.
+
+### 3.5 Stop and power off
 
 ```bash
 scripts/stop_robot.sh          # stop everything; RTAB-Map saves the map (can take up to ~90 s)
@@ -160,7 +222,7 @@ for the LEDs, then disconnect.
 `stop_robot.sh` also checks the map was not distorted during the session
 (6.4) and keeps a known-good copy, `~/.ros/rtabmap.db.lastclean`.
 
-### 3.5 When the robot is not localised (or was moved by hand)
+### 3.6 When the robot is not localised (or was moved by hand)
 
 ```bash
 scripts/localise.sh                     # ROBOT TURNS: the same search as at startup
@@ -177,12 +239,12 @@ If the pose shown is **wrong**, do not confirm it. Move the robot into open
 floor with walls and furniture in view and run `scripts/localise.sh` again.
 `scripts/localise.sh --dry-run` shows what it would run without doing it.
 
-### 3.6 Emergency stop
+### 3.7 Emergency stop
 
 - Fastest: **stop** in Foxglove (missions) or Ctrl-C in the mission terminal.
 - Everything: `scripts/stop_robot.sh` — all nodes stop; the Arduino watchdog
   brakes the wheels as soon as commands stop.
-- Physical: lift the drive wheels / cut the battery. (Last resort — see 3.4.)
+- Physical: lift the drive wheels / cut the battery. (Last resort — see 3.5.)
 
 ---
 

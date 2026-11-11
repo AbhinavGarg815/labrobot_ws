@@ -36,9 +36,18 @@ PLANNER for a path to each (/labrobot/follow_plan) - the robot never moves:
 no NavigateToPose, no Spin, no speed limit.
 """
 
-import json
-import math
 import os
+
+# One OpenBLAS thread, set BEFORE numpy loads. With the default pool (one per
+# core) every tiny 3x3 matrix product woke the pool and its threads then
+# spin-waited: the tracker used 121% of a core with nobody in view; with one
+# thread, 28% (measured 2026-11-11, M6.T1). Nothing here is big enough to
+# gain from BLAS threads.
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+
+import json  # noqa: E402
+import math
 import signal
 import time
 
@@ -57,8 +66,8 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from rclpy.time import Time
 from std_msgs.msg import String
-from tf2_ros import Buffer, TransformException, TransformListener
 
+from labrobot_follow.odom_pose import yaw_of
 from labrobot_follow.follow_logic import (Costmap, adaptive_speed, free_goal, standoff_goal,
                                           wrap, yaw_quat)
 
@@ -104,8 +113,11 @@ class PersonFollower(Node):
         if not os.path.exists(self.behavior_tree):
             raise FileNotFoundError(self.behavior_tree)
 
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+        # Robot pose from the EKF's odometry (the same estimate as the
+        # odom -> base_footprint TF, ekf.yaml publish_tf) - a Python TF
+        # listener costs ~19% of a core on this robot (odom_pose.py).
+        self.odom_pose = None         # (monotonic receive time, xy, yaw)
+        self.create_subscription(Odometry, '/odometry/filtered', self.on_odom, 10)
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.spin = ActionClient(self, Spin, 'spin')
         self.planner = ActionClient(self, ComputePathToPose, 'compute_path_to_pose')
@@ -192,14 +204,17 @@ class PersonFollower(Node):
             self.status_text = text
             self.status_t = now
 
+    def on_odom(self, msg):
+        if msg.child_frame_id and msg.child_frame_id != self.base_frame:
+            return
+        p, q = msg.pose.pose.position, msg.pose.pose.orientation
+        self.odom_pose = (time.monotonic(), np.array([p.x, p.y]), yaw_of(q.x, q.y, q.z, q.w))
+
     def robot_pose(self):
-        try:
-            tf = self.tf_buffer.lookup_transform(self.odom_frame, self.base_frame, Time())
-        except TransformException:
+        """(xy, yaw) in odom, or None if odometry is older than 0.5 s."""
+        if self.odom_pose is None or time.monotonic() - self.odom_pose[0] > 0.5:
             return None
-        t, q = tf.transform.translation, tf.transform.rotation
-        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-        return np.array([t.x, t.y]), yaw
+        return self.odom_pose[1], self.odom_pose[2]
 
     def target_seen(self):
         fresh = time.monotonic() - self.tstate_t < 0.5
@@ -374,7 +389,7 @@ class PersonFollower(Node):
             # a short gap (DDS discovery, a loaded CPU) is not a reason to give
             # up; a missing transform for tf_grace_s is
             if time.monotonic() - self.tf_ok_t > self.tf_grace_s:
-                self.halt(f'no odom -> base_footprint transform for {self.tf_grace_s:.0f} s')
+                self.halt(f'no robot pose (/odometry/filtered) for {self.tf_grace_s:.0f} s')
             elif self.state == FOLLOW:
                 self.cancel_nav()
             return

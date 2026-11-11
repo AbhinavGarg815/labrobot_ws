@@ -54,6 +54,16 @@ _cudart.cudaGetErrorString.restype = ctypes.c_char_p
 _cudart.cudaGetErrorString.argtypes = [ctypes.c_int]
 
 
+# Block (sleep) in cudaStreamSynchronize instead of spinning. CUDA's default
+# on this Jetson spins a CPU core for the whole inference (~20 ms a frame);
+# with the nav stack using 4-7 of 6 cores that is CPU stolen for nothing.
+# Must be set before the first CUDA call creates the context; if a context
+# already exists (another library got there first) it fails harmlessly.
+_CUDA_DEVICE_SCHEDULE_BLOCKING_SYNC = 0x04
+_cudart.cudaSetDeviceFlags.argtypes = [ctypes.c_uint]
+BLOCKING_SYNC = _cudart.cudaSetDeviceFlags(_CUDA_DEVICE_SCHEDULE_BLOCKING_SYNC) == 0
+
+
 def _check(err, what):
     if err != 0:
         msg = _cudart.cudaGetErrorString(err).decode()

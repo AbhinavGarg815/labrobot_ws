@@ -41,14 +41,16 @@ def decode_pose_output(out, conf_thresh=0.15, iou_thresh=0.6, max_det=30):
         (YOLO11-pose; YOLO26-pose exported with end2end False);
       * (N, 57): x1, y1, x2, y2, score, class, 17 x 3 - NMS-free head.
     """
-    out = np.asarray(out, dtype=np.float32)
+    out = np.asarray(out)
     if out.ndim == 3:
         out = out[0]
     if out.shape[0] == 56:
-        p = out.T
-        p = p[p[:, 4] >= conf_thresh]
-        if not len(p):
+        # pick the few confident columns first; transposing all 6300 x 56
+        # floats every frame cost more CPU than the rest of the decode
+        idx = np.flatnonzero(out[4] >= conf_thresh)
+        if not idx.size:
             return []
+        p = out[:, idx].T
         cx, cy, w, h = p[:, 0], p[:, 1], p[:, 2], p[:, 3]
         boxes = np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=1)
         scores = p[:, 4]

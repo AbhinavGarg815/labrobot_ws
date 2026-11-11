@@ -996,6 +996,92 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### M6.T1 — perception on the GPU: engines, parity, CPU (2026-11-11)
+
+**Environment (M6.T0).** Nothing system-wide changed except
+`ros-humble-vision-msgs` (apt). numpy 1.21.5 / scipy 1.8.0 checked unchanged
+after every step. `apt install python3.10-venv` was REJECTED: it would also
+have upgraded the python3.10 interpreter (patch 16 -> 18) under the running
+stack. Instead `uv` 0.13.7 (static binary, sha256-checked, `~/.local/bin`)
+made `~/venvs/pf_export` from the system python3.10: torch 2.14.1+cpu,
+torchvision, ultralytics 8.4.210, onnx, onnxslim, boxmot 26.0.0. Used only to
+export; at run time the nodes use system Python + TensorRT 10.3 + libcudart
+through ctypes (`trt_engine.py`) - no torch, pycuda or onnxruntime.
+
+**Models** (`tools/build_follow_models.sh` rebuilds all; nothing in git):
+
+| File | Source | sha256 (first 16) |
+|---|---|---|
+| yolo26n-pose.pt / yolo26s-pose.pt | github.com/ultralytics/assets v8.4.0 | eb3bb8268828aeaf / a083adb42303728a |
+| yolo11n-pose.pt / yolo11s-pose.pt (fallback, engines not built) | same | 869e83fcdffdc737 / 1060bda4a27012e0 |
+| osnet_x0_25_msmt17.pt | torchreid zoo (gdown 1sSwXSUlj4_tHZequ_iZ8w_Jh0VaRQMqF) | 6f57607fed9f502b |
+| osnet_ain_x1_0_msmt17.pt | torchreid zoo (gdown 1SigwBE6mPdqiJMqhuIY4aqC7--5CsMal) | 8a07e8da38946f7c |
+
+Export: detector 640x480 native (no letterbox), uint8 NHWC RGB in, cast /255
+transpose in the graph; output (56, 6300) = box, score, 17 keypoints (YOLO26
+pose exports end2end=False here, so NMS is ours: 0.46 ms). Re-ID 256x128,
+uint8 in, ImageNet normalisation and L2 norm in the graph, dynamic batch
+1-16. All weights loaded 100% (boxmot strict loader).
+Build time on this Jetson at 15 W with the stack up: **~16 min per YOLO
+engine**, ~5 min per OSNet.
+
+**Problem: TensorRT rejects uint8 intermediates.** First re-ID export did
+permute-then-cast; trtexec: "legalUINT8: TensorRT does not support UINT8
+types for intermediate tensors". Fixed: cast first.
+
+**Parity vs the original PyTorch models** (`tools/check_follow_models.py`,
+Ultralytics bus.jpg at 640x480, 4 people): all PASS.
+
+| Engine (FP16) | Parity | ms per call, 1 / 4 / 8 people |
+|---|---|---|
+| yolo26s-pose | IoU >= 0.998, score diff <= 0.001, kpts 0.1 px | 11.6 |
+| yolo26n-pose | IoU >= 0.997, score diff 0.000, kpts 0.1 px | 8.9 |
+| osnet_ain_x1_0 | cosine >= 0.9998 | 6.4 / 12.9 / 23.7 |
+| osnet_x0_25 | cosine >= 0.9998 | 3.3 / 5.9 / 10.1 |
+
+(Wall time of the whole Python call incl. copies and decode, nav stack up,
+load ~3-5.) Worst case 8 people with the big pair: ~35 ms < 66 ms frame.
+
+**Problem: the live node used 1.2 cores with nobody in view** (budget 0.5).
+Found by elimination, each measured:
+- CUDA spin-waits in cudaStreamSynchronize by default: 11.7 ms CPU per
+  11.8 ms inference. `cudaSetDeviceFlags(BlockingSync)` before the context:
+  6.6 ms CPU, +1.5 ms latency. The rest is TensorRT's enqueue (4.8 ms CPU,
+  kernel launches; CUDA graphs could cut it - not done).
+- Decode transposed all 6300x56 outputs before filtering: now filters the
+  score row first (0.46 ms).
+- A Python TF listener costs 19% of a core on its own here (/tf ~87 msg/s,
+  executor wake-ups). Both nodes now take the robot pose from
+  /odometry/filtered (same EKF estimate as the TF edge; buffered and
+  interpolated at the image stamp, `odom_pose.py`, unit-tested) and read the
+  static camera mount from TF once.
+- **The big one: numpy's OpenBLAS thread pool.** `top -H` showed two
+  threads at 31% each besides the main thread: OpenBLAS workers spin-waiting
+  after every 3x3 matrix product. `OPENBLAS_NUM_THREADS=1`: **121% -> 28%**
+  of a core (no people, 7-9 fps = all synchronised frames the camera
+  delivers at the moment). Set in both nodes before numpy loads.
+In the node the detector takes ~20 ms (11.6 in the benchmark): the GPU
+clocks down between frames (bursty load); latency from capture to result
+~105 ms.
+
+**Stack observations made on the way (not fixed - not person following):**
+- `auto_localise.py` stays up after `[LOCALISED]` to hold its latched status
+  and kept its TF listener: ~30% of a core for hours. Fixed: it now
+  unregisters TF and /info after deciding (takes effect next bringup).
+- Other Python nodes may have the same OpenBLAS spin: imu_bias_compensator
+  runs at 29% of a core for 200 Hz of simple arithmetic. Recommendation:
+  `OPENBLAS_NUM_THREADS=1` for the stack's Python nodes (bringup), measured
+  with check_system.py.
+- **Problem 51 - EKF yaw drifts 2.5 deg/min with the robot standing still**
+  (17:5x-19:00, ~2 h after bringup): wheel odometry yaw constant to 0.001 deg
+  over 28 s while /odometry/filtered turned 1.2 deg; `/imu/unbiased` z mean
+  +0.000474 rad/s (+1.63 deg/min). imu_bias_compensator estimates the bias
+  ONCE at startup; it has drifted since (camera warming up). Effect on
+  following: none worth noting (robot and person are both measured in the
+  same odom; ~1.5 mm/s apparent motion at 2 m). Effect on navigation: odom
+  yaw wanders; RTAB-Map's map->odom absorbs it. Suggested fix (backlog):
+  re-estimate the bias whenever wheel odometry says the robot is still.
+
 ### M6 — Person following: design (2026-11-11)
 
 Task: detect people, lock onto one, keep them through occlusions and crowds,
@@ -2783,6 +2869,8 @@ Parked when work moved to person following:
 | Blocked-waypoint test on hardware | APPROACHED/BLOCKED logic tested offline only. | M5.T3 |
 | Goal relay live check | Built and tested standalone; verify at next bringup with display frame `odom`. | Goal relay entry |
 | Battery voltage monitoring, wheel slip | Offered earlier, not started. | Open risks |
+| Gyro bias re-estimation | EKF yaw drifts ~2.5 deg/min at rest ~2 h after bringup: the bias is estimated once at startup. Re-estimate while wheel odometry says the robot is still. | Problem 51 (M6.T1) |
+| OpenBLAS threads in Python nodes | Spin-waiting BLAS workers cost the person tracker 0.9 core; imu_bias_compensator (29%) and others likely the same. Set OPENBLAS_NUM_THREADS=1 in bringup, measure. | M6.T1 |
 
 ---
 

@@ -103,7 +103,7 @@ def yaw_of(q):
 class AutoLocalise(Node):
     def __init__(self):
         super().__init__('auto_localise')
-        self.buf = tf2_ros.Buffer(); tf2_ros.TransformListener(self.buf, self)
+        self.buf = tf2_ros.Buffer(); self.tf_listener = tf2_ros.TransformListener(self.buf, self)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.pub_ok = self.create_publisher(Bool, '/labrobot/localised', latched)
@@ -116,7 +116,7 @@ class AutoLocalise(Node):
         self.corrections = []     # (closure id, x, y, yaw) of map->odom after each
         self.closure_poses = []   # (closure id, x, y, yaw) of the ROBOT in the map, per closure
         self.last_ref = 0
-        self.create_subscription(Info, '/info', self.on_info, 10)
+        self.info_sub = self.create_subscription(Info, '/info', self.on_info, 10)
 
     def status(self, ok, text):
         self.pub_ok.publish(Bool(data=ok))
@@ -474,6 +474,11 @@ def main():
     except KeyboardInterrupt:
         rc = 130
     if not args.once and rc != 130:
+        # Staying up only keeps the latched status alive. Drop the inputs:
+        # the TF listener alone deserialised every /tf message (~87/s) in
+        # Python for hours - ~30% of a core (measured 2026-11-11, M6).
+        n.tf_listener.unregister()
+        n.destroy_subscription(n.info_sub)
         try:
             while rclpy.ok():
                 rclpy.spin_once(n, timeout_sec=0.5)
