@@ -3,7 +3,7 @@
 Living record of the labrobot build: what each file is for, what broke, and how
 it was fixed. Updated as work proceeds, not at the end.
 
-**Last updated:** 2026-08-03 · **Current milestone:** M3 (SLAM) · M0–M2 complete, M3.T1 in progress
+**Last updated:** 2026-11-11 · **Current milestone:** M6 (person following) · M0–M5 complete (see section 5)
 
 ---
 
@@ -995,6 +995,128 @@ milestone - "leave it for now". Known residuals, parked: ~1 cm corner margins
 at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
+
+### M6 — Person following: design (2026-11-11)
+
+Task: detect people, lock onto one, keep them through occlusions and crowds,
+re-identify them after loss, follow at a safe distance avoiding obstacles,
+operable from Foxglove.
+
+**Facts measured before designing (stack running, frozen map):**
+- **Colour field of view is 55.8 deg x 43.3 deg, not 69 deg.** `camera_info`:
+  fx = fy = 604.2 px, cx 318.4, cy 251.8 at 640x480. 640x480 is a 4:3 crop of
+  the 16:9 sensor; 69 deg is the 16:9 figure. A person is in view only within
+  +/-27.9 deg of the camera axis. Keeping the target near the image centre is
+  therefore a first-class control objective, not a nicety. (848x480 colour
+  would give ~69 deg, but it changes the images RTAB-Map localises against;
+  not changed - map items are parked.)
+- Obstacle cloud `/camera/camera/depth/color/points` is already 43 204
+  points/frame (decimated), so a second consumer (collision monitor) is cheap.
+- Velocity smoother hard cap is **0.06 m/s / 0.3 rad/s** (nav2_params.yaml);
+  RPP's 0.26 m/s is never reached. Following at walking pace needs this cap
+  raised (user decision, below).
+- `check_system.py` at 17:40: machine 62% busy (38% = ~2.3 cores free), RAM
+  3.0 GiB available, colour 10.1 Hz / aligned depth 11.4 Hz (below 15 under
+  load). Of the busy share: rtabmap 63%, foxglove_bridge 41% (client
+  connected), realsense 36%, and three Python leftovers ~60% between them:
+  `auto_localise.py` still running an hour after `[LOCALISED]` (27%), a
+  `waypoints.py pick u2` loop and a `goal_relay_test` instance.
+- Not packaged for Humble: `opennav_following` (Nav2's Following server is
+  Jazzy+). Available from apt: `ros-humble-vision-msgs` 4.1.1. Installed:
+  `nav2_collision_monitor`, follow_point.xml, GoalUpdater, TruncatePath.
+- No pip / ensurepip on the system Python; sudo works.
+
+**Survey -> choices (each to be validated by measurement in M6.T1-T3):**
+
+| Stage | Choice | Why | Alternatives considered |
+|---|---|---|---|
+| Detection | **YOLO26-pose** (n and s benchmarked; YOLO11-pose as fallback), TensorRT FP16, input 640x480 (no letterbox) | One pass gives person boxes AND 17 keypoints; torso keypoints give the range sample (box centre often hits background between legs/arms). YOLO26 is Ultralytics' 2025-26 edge model, NMS-free one-to-one head. GPU is otherwise idle on this robot | RT-DETR/D-FINE (Apache-2.0, no keypoints), RTMO (one-stage pose, heavier), top-down RTMPose (needs a second detector) |
+| Re-ID embedding | **OSNet-AIN x1_0** (MSMT17) vs **OSNet x0_25**, TensorRT FP16, 256x128 crops, batched | OSNet is the standard lightweight re-ID backbone; AIN variant is built for cross-domain generalisation (trained on surveillance, used on a robot) | CLIP-ReID / TransReID / KPR: stronger on benchmarks, far too heavy beside the nav stack |
+| Multi-object tracking | **BoT-SORT-style**, own numpy implementation: 8-state image Kalman filter, ByteTrack two-stage (high/low confidence) association, IoU fused with appearance cost | BoT-SORT is the standard ReID-capable tracker for moving cameras. Own code: small (~300 lines), no AGPL tracker dependency, testable | ByteTrack (no appearance), Deep OC-SORT (similar; no clear win in the literature at this scale) |
+| Camera motion compensation | **From odometry, not image features**: predicted boxes are warped by the pure-rotation homography K R K^-1, with R from TF (odom->camera) between frames | BoT-SORT's sparse-optical-flow CMC costs CPU and fails on texture-poor views; the EKF already knows the yaw. At 0.3 rad/s a frame is ~12 px of shift | image CMC (CPU), none |
+| Target identity | **Online target gallery (short-term FIFO + long-term diverse set) plus a distractor gallery**; re-acquire only on match + margin over distractors + N-frame vote + 3D plausibility gate | Robot person-following SOTA is online appearance learning on top of a fixed embedding (Koide & Miura 2020; OCL-RPF, Ye et al., RA-L 2024: short-/long-term memories). A gallery is that idea without online back-prop, which the budget does not allow | fixed-threshold re-ID only (fails on lighting/viewpoint change) |
+| 3D estimate | Median of valid aligned-depth pixels inside the torso (shoulders + hips), back-projected, TF to **`odom`** at the image stamp; 2D constant-velocity Kalman filter in `odom` with a range-dependent noise model (depth RMS 7.4 mm x range^2) | `odom` is smooth; `map` can be ~25 cm off (M5.T5) | box-centre depth (hits background) |
+| Following | **Nav2 dynamic following**: custom tree based on follow_point.xml (GoalUpdater -> ComputePathToPose at 2 Hz -> FollowPath with a dedicated `FollowPerson` RPP and goal checker, KeepRunningUntilFailure), sent as a NavigateToPose goal with its own `behavior_tree`. Goal = stand-off point computed by the follower | Obstacle avoidance and recoveries come from the stack that is already tuned and tested here | Dedicated visual-servo controller: better at keeping the person centred, but no planning around obstacles. Kept as a measured fallback (below) |
+| Safety | **nav2_collision_monitor** between velocity smoother and drive: stop polygon (footprint + 0.10 m ahead), slowdown polygon, source = the 43k-point depth cloud | Independent of planner and tracker; also protects missions and recoveries | none (Nav2 alone) |
+
+**The target in the costmap - decision.** The person is a tall obstacle and
+the depth layers mark them like any other. Planning *to* the person fails
+(their cell plus inscribed radius is lethal), which is why follow_point.xml's
+"truncate the path before the person" is not used as is. Decision: **keep the
+person in the costmap** (the robot can never plan through them, and the
+collision monitor sees them too) and have the follower compute the goal
+itself: the point at the stand-off distance on the robot->person line,
+heading = facing the person; if that cell is not free, the nearest free cell
+on the stand-off circle within +/-60 deg (same idea as the waypoints'
+APPROACHED logic). Raytracing clears their trail as they walk on. Filtering
+the target out of the cloud was rejected: it costs CPU on 43k points at
+15 Hz, and it removes the one obstacle the robot is most likely to hit.
+
+**Goal frame.** Goals are published in `odom`, stamped with the image time
+(always inside the TF buffer; the 10 s stale-stamp failure of M5.T5 cannot
+recur because updates come at >= 2 Hz with fresh stamps).
+
+**Nav2 vs dedicated controller - how it will be decided.** Dry run (plans
+only), then slow hardware tests, measuring: target kept in view (% of time
+|bearing| < 20 deg), distance error, time from person-stop to robot-stop, and
+loss rate on a fixed route (straight, a 90 deg turn, a doorway). If Nav2 loses
+the person on turns because it follows the path rather than facing the
+person, add a "face target" correction in the follower (re-send the goal with
+the heading towards the person; RPP rotates to it on arrival). Only if that
+fails, the dedicated controller (behind the same collision monitor).
+
+**Behaviour (state machine in the follower):**
+- IDLE -> on `start`: lock the nearest person in front (|bearing| < 20 deg,
+  range < 3 m) -> ACQUIRED (gallery seeded over ~1 s, robot still) -> FOLLOW.
+  Also `select <id>` (track ids are in the debug image) and a Foxglove 3D
+  "Publish point" click near a person.
+- FOLLOW: goal at stand-off; slow down near it (RPP approach scaling); hold
+  if closer than the minimum distance; the collision monitor stops the robot
+  physically.
+- LOST (target track gone or failed identity check): hold, drive to the
+  last seen position (KF prediction capped at 2 s), then SEARCH: turn towards
+  the last seen bearing, bounded. Re-acquire only on a re-ID match.
+- STOP: on command, timeout, or search exhausted. Status latched on
+  `/labrobot/follow_status`.
+- **Person outpaces the robot** (they walk ~1 m/s, the robot at most
+  0.26): the robot keeps following the target's track while it is seen;
+  status says `far`; past the maximum tracking range or out of view -> LOST.
+  The operator guide will tell the person to walk slowly and wait when the
+  robot falls behind.
+
+**Interfaces (proposed):** `/labrobot/people` (vision_msgs/Detection3DArray,
+all tracks in `odom`, id = track id), `/labrobot/follow_target`
+(geometry_msgs/PoseWithCovarianceStamped, `odom`), `/labrobot/follow_cmd`
+(std_msgs/String: `start`, `stop`, `select <id>`, `release`),
+`/labrobot/follow_status` (std_msgs/String, latched, like mission_status),
+`/labrobot/follow_debug/compressed` (boxes, ids, target; 5 Hz, only when
+subscribed), `/labrobot/follow_markers` (MarkerArray).
+
+**Software layout.** New package `src/labrobot_follow` (ament_cmake +
+python module): `trt_engine.py` (TensorRT 10 runtime via ctypes to
+libcudart - no pycuda/onnxruntime/torch at run time), `detector.py`,
+`reid.py`, `tracker.py`, `identity.py`, `target_filter.py`, nodes
+`person_tracker.py` (GPU perception + tracking + identity + 3D) and
+`person_follower.py` (state machine, Nav2 actions, dry-run mode). Model
+export happens once, in a venv outside ROS (`~/venvs/pf_export`: torch CPU,
+ultralytics, onnx); the ONNX gets uint8-HWC input with normalisation folded
+into the graph, so the CPU only copies the frame. Models and engines live in
+`~/labrobot_models/` (not in git; `tools/build_follow_models.sh` rebuilds
+them). numpy/scipy system versions are not touched.
+
+**Milestones and tests:**
+
+| ID | Task | Pass criterion |
+|---|---|---|
+| M6.T0 | Design (this), environment (venv, vision_msgs), user decisions | ROS still imports; numpy 1.21.5 / scipy 1.8.0 unchanged |
+| M6.T1 | Engines; trtexec + end-to-end benchmarks with the nav stack up; record a bag of people walking (robot still) | detector + re-ID keep up with the camera; added CPU <= 0.5 core; RAM <= 600 MB |
+| M6.T2 | Tracker + target lock + gallery; unit tests; offline on the bag | no wrong re-acquisition on the bag; ID kept through crossings |
+| M6.T3 | 3D in `odom` + KF | range within 10 cm at 1/2/3 m tape marks; bearing within 2 deg |
+| M6.T4 | Collision monitor (output first to a test topic, then live) | stops on an obstacle in the zone; no false stops in open floor |
+| M6.T5 | Follower dry run (goals + plans, robot does not move) | goals at stand-off, plans valid, state machine transitions on cue |
+| M6.T6 | Slow supervised hardware tests (0.06 m/s, then the agreed cap) | stand-off held; stops inside minimum distance |
+| M6.T7 | Robustness: occlusion, crossings, several people, kidnap of the target | metrics above, logged per run |
+| M6.T8 | Operator guide + report | user can run it alone |
 
 ### Goal relay: Foxglove goals in any frame (2026-11-11)
 
@@ -2549,6 +2671,8 @@ more tape work.
 | M4.T2 | Depth costmap layers, blind zone | ⬜ |
 | M4.T3 | Point navigation, waypoints | ⬜ |
 | M4.T4 | Obstacle avoidance, recoveries | ⬜ |
+| M5 | Waypoint missions (see section 5) | ✅ |
+| M6 | Person following (design and tasks T0-T8: section 5, "M6 — Person following") | in progress |
 
 ---
 
