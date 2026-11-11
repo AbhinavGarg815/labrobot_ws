@@ -996,6 +996,35 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### M5.T5 — test on the original 27 Oct map (v6_clean), map frozen (2026-11-11)
+
+User request: "first, lets test on old map". Activated
+`lab_v6_clean_20261027.db` (also as `.lastclean`, so the drift guard compares
+like with like); t1-t3 converted into its frame as t1o-t3o (+4.90 deg rigid
+fit over 700 nodes, residual median 7.3 cm, p90 18 cm). The previous active
+map was kept as `docs/maps/backup/active_before_v6clean_20261111_1636.db`.
+Result:
+- **First fully automatic localisation since 29 Oct.** Spot 1 ambiguous (92%)
+  but ring score 0.51; spot 2 **distinct (75%), ring 0.53**, 1/1 visual
+  closure (node 524) agreeing; RTAB-Map adopted it; view check at acceptance
+  OK (3% far-in-free, 78% near obstacles). No corridor alias on this map.
+- **Then RTAB-Map's own localisation pulled the pose ~0.25-0.45 m and 7-9 deg
+  away** within seconds, silently (after "Localization was good, but waiting
+  for another one ... MaxOdomCacheSize"); it had also rejected closures
+  1468<->523 and 1469<->524 as 0.47 m inconsistent with the hint (error ratio
+  3.13 > 3.0). Reproduced by re-hinting: back to (-0.52, 0.34, 85) in 1 s.
+- At RTAB-Map's pose the view check fails (41-45% near obstacles); the mission
+  gate correctly refused to start. Offsets scanned with the view check: the
+  view fits (97-100% near / 0-1% free) only 0.25-1.0 m to the robot's right of
+  it, which includes the scan-match pose.
+- Shown both in Foxglove (`tools/show_pose_candidates.py`, MarkerArray on
+  /labrobot/pose_candidates): the **user judged the scan-match pose (green)
+  more correct**.
+So on the old map RTAB-Map's visual localisation, against 27 Oct imagery, is
+biased ~25 cm here; geometry and the user agree with each other. Camera
+extrinsics are an unlikely cause (yaw measured +0.57 deg; camera 1.8 cm from
+the turning centre). Not yet driven on this map.
+
 ### Problem 50 — every session that added nodes re-oriented the map ~4-5 deg; drift guard (2026-11-11)
 
 Old-node drift between successive map files (tools/map_drift.py, rigid fit
