@@ -22,7 +22,10 @@ source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/setup.bash
 set -u
 echo "recording $SECS s to $OUT (Ctrl-C stops early, the bag is kept)"
-timeout --signal=INT "$SECS" ros2 bag record -o "$OUT" \
+# --foreground: without it timeout runs the recorder in a background process
+# group, and the first time rosbag2 touches the terminal the kernel STOPS it
+# (SIGTTIN, state T) - nothing is recorded (2026-11-11).
+timeout --foreground --signal=INT "$SECS" ros2 bag record -o "$OUT" \
     /camera/camera/color/image_raw \
     /camera/camera/aligned_depth_to_color/image_raw \
     /camera/camera/color/camera_info \
