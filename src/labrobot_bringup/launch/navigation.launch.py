@@ -57,13 +57,20 @@ def generate_launch_description():
              remappings=[('cmd_vel', 'cmd_vel_nav')]),
         # Custom tree: the stock one minus the BackUp recovery, which is a
         # blind and (on this chassis) heavily rotating reverse. See the XML.
+        # Goals clicked in Foxglove arrive on /goal_pose in the 3D panel's
+        # display frame; in `odom` the planner lost them after ~10 s
+        # (2026-11-11). goal_relay converts each into `map` once and
+        # bt_navigator listens to its output instead - see goal_relay.py.
+        Node(package='labrobot_bringup', executable='goal_relay.py',
+             name='goal_relay', output='screen'),
         Node(package='nav2_bt_navigator', executable='bt_navigator',
              name='bt_navigator', output='screen',
              parameters=[params_file, {
                  'default_nav_to_pose_bt_xml': os.path.join(
                      pkg, 'config', 'behavior_trees',
                      'navigate_to_pose_no_backup.xml'),
-             }]),
+             }],
+             remappings=[('goal_pose', '/labrobot/goal_pose_map')]),
         Node(package='nav2_velocity_smoother', executable='velocity_smoother',
              name='velocity_smoother', output='screen', parameters=[params_file],
              remappings=[('cmd_vel', 'cmd_vel_nav'),

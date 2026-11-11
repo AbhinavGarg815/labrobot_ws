@@ -42,9 +42,9 @@ Then in the Foxglove app: *Open connection* → *Foxglove WebSocket* →
 
 **Foxglove setup (once):**
 
-- **3D panel** → settings (gear) → *Frame* → **Display frame = `map`**.
-  This matters: goals you click are sent in the display frame, and a goal in
-  `odom` fails after ~10 s (see section 8).
+- **3D panel** → settings (gear) → *Frame* → **Display frame = `map`**, so
+  you see the robot on the map. (Goals you click work in any display frame:
+  `goal_relay` converts them into `map` on arrival.)
 - Useful topics to show: `/map`, `/global_costmap/costmap`, `/plan`,
   `/camera/camera/color/image_raw/compressed`,
   `/labrobot/localisation_status`, `/labrobot/mission_status`.
@@ -98,7 +98,8 @@ driving.
 
 **a) One goal, straight from Foxglove.** 3D panel → *Publish pose* → topic
 `/goal_pose` → click the destination and drag for the final heading. Nav2
-drives there immediately. Watch `/plan` for the route.
+drives there immediately. Watch `/plan` for the route. Each goal is logged in
+the Nav2 log as `goal (<frame>) -> map (x, y, heading)`.
 
 **b) Named waypoints and a mission** (the robot checks each waypoint against
 the live map before driving to it):
@@ -318,7 +319,7 @@ Quick searches: `grep -E "Goal (succeeded|failed)" docs/logs/nav_*_nav2.log`,
 
 | Symptom | Cause / fix |
 |---|---|
-| Foxglove goal fails after ~10 s; Nav2 log: `Extrapolation Error ... into the past ... from frame [odom]` | The 3D panel's display frame is `odom`. Set it to **`map`** and send again. |
+| Foxglove goal ignored, or fails after ~10 s with `Extrapolation Error ... into the past ... from frame [odom]` | `goal_relay` is not running (`grep goal_relay docs/logs/nav_*_nav2.log`): restart the stack. Meanwhile set the display frame to **`map`**. |
 | Mission: `NOT starting the mission ... current view does not match the map` | The pose is off. `scripts/localise.sh`; if Foxglove shows the right pose, `--confirm`. |
 | Localisation: `NOT localised after 4 viewpoints` | Drive or carry the robot to open floor with structure in view; `scripts/localise.sh`. If the pose shown is right: `--confirm` / `--confirm-geometry`. |
 | `only turned N deg (obstacle within ~0.3 m?)` or `Collision Ahead - Exiting Spin` with nothing there | Stale obstacles in the local costmap (often after a hand move). Clear it: `ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/ClearEntireCostmap "{}"` — only if the space really is clear. |
@@ -338,8 +339,6 @@ Quick searches: `grep -E "Goal (succeeded|failed)" docs/logs/nav_*_nav2.log`,
 - In the middle of the lab, RTAB-Map's position on the 27 Oct map can be
   ~25 cm off (its old images no longer match well). Missions there may refuse
   to start (view check). A fresh map is the planned fix.
-- Foxglove goals need display frame `map` (a goal relay that removes this is
-  planned).
 - The robot cannot see beside or behind itself; after a hand move, obstacles it
   remembered are in the wrong place until cleared or seen again.
 
@@ -366,6 +365,7 @@ Quick searches: `grep -E "Goal (succeeded|failed)" docs/logs/nav_*_nav2.log`,
 |---|---|
 | `waypoints.py` | `save`, `pick`, `add`, `list`, `delete`, `go` (missions) |
 | `nav_goal.py` | a goal relative to the robot |
+| `goal_relay.py` | started with Nav2: converts every `/goal_pose` into `map` (`/labrobot/goal_pose_map`) |
 | `auto_localise.py` | startup localisation (normally via the scripts above) |
 | `localisation_check.py` | camera view vs map at the current pose |
 | `check_costmap.py`, `check_system.py`, `check_map.py`, `monitor_slam.py` | health checks |

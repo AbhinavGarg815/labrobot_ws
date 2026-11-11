@@ -996,6 +996,20 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Goal relay: Foxglove goals in any frame (2026-11-11)
+
+Fixes the two lost goals of M5.T5 (goal in `odom`, re-transformed at its
+click-time stamp on every replan until the TF buffer no longer reached it).
+`goal_relay.py` (started by navigation.launch.py) takes /goal_pose in any
+frame, transforms it with the LATEST map<-frame transform (also immune to the
+PC clock differing from the robot's), re-stamps it and publishes
+/labrobot/goal_pose_map; bt_navigator is remapped to that topic. Standalone
+test on remapped test topics against the live TF (Nav2 untouched): goal in
+`odom` stamped 60 s old, in `base_footprint`, and in `map` - all PASS, 0.0 mm /
+0.00 deg against an independent TF computation, output in map, age 0.00 s.
+Takes effect at the next bringup; live check then: a goal clicked with
+display frame `odom`.
+
 ### Operator guide (2026-11-11, user request)
 
 `docs/OPERATOR_GUIDE.md`: how to run the robot alone - connect,
