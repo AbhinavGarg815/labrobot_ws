@@ -1010,6 +1010,16 @@ operable from Foxglove.
   therefore a first-class control objective, not a nicety. (848x480 colour
   would give ~69 deg, but it changes the images RTAB-Map localises against;
   not changed - map items are parked.)
+- **At follow distance the camera sees legs, not torsos.** Colour rays:
+  top 11.84 deg ABOVE horizontal, bottom 31.47 deg below (cy 251.8, fy
+  604.3, pitch 10.78, height 0.844). Visible height band on a person at
+  distance d: 1.0 m -> 0.23-1.05 m; **1.2 m -> 0.11-1.10 m (shins to belt)**;
+  2.0 m -> 0-1.26 m; 3.0 m -> 0-1.47 m. Shoulders (1.45 m) enter view only
+  beyond 2.9 m, the head (1.70 m) beyond 4.1 m. Consequences: depth is
+  sampled on hips/thighs (keypoints 11-14), not the torso; detection and
+  re-ID must work on lower-body views at the stand-off, and the target
+  gallery must hold views from several distances. To be measured on a
+  recording before the stand-off is fixed (M6.T1).
 - Obstacle cloud `/camera/camera/depth/color/points` is already 43 204
   points/frame (decimated), so a second consumer (collision monitor) is cheap.
 - Velocity smoother hard cap is **0.06 m/s / 0.3 rad/s** (nav2_params.yaml);
@@ -1025,6 +1035,13 @@ operable from Foxglove.
   Jazzy+). Available from apt: `ros-humble-vision-msgs` 4.1.1. Installed:
   `nav2_collision_monitor`, follow_point.xml, GoalUpdater, TruncatePath.
 - No pip / ensurepip on the system Python; sudo works.
+
+**User decisions (2026-11-11):** speed **adaptive to the person's speed**,
+with a floor of 0.06 m/s for testing (implemented as Nav2 `speed_limit`
+updates from the follower, cap raised step by step); stand-off **1.2 m, stop
+inside 0.8 m** (chosen before the visibility finding above - to be
+re-confirmed with measurements); when lost, **search with a full 360 deg
+turn**; **AGPL (Ultralytics) models accepted**.
 
 **Survey -> choices (each to be validated by measurement in M6.T1-T3):**
 
