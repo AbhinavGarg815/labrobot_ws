@@ -996,6 +996,32 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 53 — people leave permanent marks in the local costmap (2026-11-12)
+
+Second live dry run (robot still, user walking the script; log
+`docs/logs/followrun_dry2.jsonl`): tracking, the stand-still lock and
+re-identification all worked (re-identified twice after leaving the view),
+but the follower reported "stand-off blocked all round - holding" for long
+stretches with nothing there. After the run, with the user gone and the robot
+unmoved, the local costmap was **lethal everywhere from 0.35 to 1.45 m ahead,
++-1 m wide**, while tools/depth_ahead.py showed clear floor there.
+Cause: Nav2's obstacle/voxel layers drop points outside
+min/max_obstacle_height BEFORE raytracing, so floor points never clear
+anything; cells near the robot clear only when a ray to an obstacle behind
+them passes through, and rays to distant walls run above leg height. A person
+walking within ~1.5 m leaves leg marks that stay. For following this is a
+blocker (the robot cannot plan into the space the person just walked
+through), and it affects ordinary missions after anyone walks near the robot.
+Options: (a) spatio-temporal voxel layer (STVL, the standard Nav2 layer for
+depth cameras: frustum clearing of what the camera sees as free, time decay
+for what it cannot see; `ros-humble-spatio-temporal-voxel-layer` 2.3.4 in apt);
+(b) an extra clearing-only observation source including floor points (small
+change; leaves a ring near the robot uncleared, inside the blind zone);
+(c) mask the target person out of the cloud (does nothing for other people).
+Also fixed: the follower's 'seen' test used the tracker's per-frame state,
+so one missed frame flickered LOST for 0.2-0.4 s; now it uses the time since
+the last measurement only.
+
 ### M6.T2 — first recording, offline: tracking and re-identification (2026-11-11)
 
 Bag `~/labrobot_bags/people1` (118 s, 14.9 Hz colour + aligned depth, robot

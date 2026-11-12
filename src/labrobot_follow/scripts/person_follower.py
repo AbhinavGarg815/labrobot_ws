@@ -226,7 +226,11 @@ class PersonFollower(Node):
     def target_seen(self):
         fresh = time.monotonic() - self.tstate_t < 0.5
         st = self.tstate
-        return (fresh and st.get('track_id') is not None and st.get('state') in ('tracking', 'occluded')
+        # Seen = the target still has a track and was MEASURED within
+        # lost_after_s. Not the per-frame state: one missed frame makes it
+        # 'coasting', and that flickered LOST for 0.2-0.4 s with the person
+        # in plain view (live dry run 2026-11-12) - each would stop the robot.
+        return (fresh and st.get('track_id') is not None
                 and st.get('seen_age_s', 99) < self.lost_after_s and self.target is not None)
 
     def pose_msg(self, xy, heading, stamp=None):
