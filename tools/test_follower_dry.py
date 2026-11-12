@@ -79,7 +79,8 @@ class Fake(Node):
     def send_person(self, xy, v, seen, track_id=7):
         now = self.get_clock().now()
         st = {'state': 'tracking' if seen else 'searching', 'event': 'tracking' if seen else 'searching',
-              'track_id': track_id if seen else None, 'gallery': 10, 'seen_age_s': 0.0 if seen else 5.0}
+              'track_id': track_id if seen else None, 'gallery': 10, 'seen_age_s': 0.0 if seen else 5.0,
+              'speed': float(np.hypot(*v)) if seen else 0.0}
         self.pub_state.publish(String(data=json.dumps(st)))
         if seen:
             o = Odometry()
@@ -148,9 +149,15 @@ def main():
         run(2.0, lambda k: rel(2.5, 0))     # let its TF buffer fill
         n.pub_cmd.publish(String(data='start'))
         t_start = time.monotonic()
-        run(3.0, lambda k: rel(2.5, 0))
+        # moving at 1 m/s: must NOT start following (memory would hold only
+        # views of someone walking past - 2026-11-12)
+        run(3.0, lambda k: rel(2.5, 0), vel=(1.0, 0.0))
         s = last_status(n, t_start)
-        check('start -> FOLLOW', s.startswith('FOLLOW'), s)
+        check('start while the person moves -> ACQUIRE, stand still', 'stand still' in s, s)
+        t_still = time.monotonic()
+        run(3.0, lambda k: rel(2.5, 0))
+        s = last_status(n, t_still)
+        check('then standing still -> FOLLOW', s.startswith('FOLLOW'), s)
         g = n.goals[-1][1]
         gxy = np.array([g.pose.position.x, g.pose.position.y])
         gh = 2 * math.atan2(g.pose.orientation.z, g.pose.orientation.w)

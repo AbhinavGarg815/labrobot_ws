@@ -28,7 +28,9 @@ person_follower:
     lost_goto_s: 60.0              # cap on that drive
     search_wait_s: 60.0            # after the 360 deg search, watch this long
     max_range_m: 5.0               # beyond: "falling behind" in the status
-    acquire_timeout_s: 4.0
+    acquire_timeout_s: 8.0         # start -> must be locked and standing still within this
+    acquire_max_speed: 0.3         # m/s: 'standing still' for the lock
+    acquire_still_s: 1.0           # ... for this long (its views seed the appearance memory)
     seed_views: 4                  # appearance views to collect before moving
     goal_free_cost: 128            # local costmap_raw cost (0-255) a goal cell must be under:
                                    # 128 = ~0.34 m from an obstacle with this inflation

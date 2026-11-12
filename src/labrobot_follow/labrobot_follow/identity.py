@@ -185,7 +185,14 @@ class TargetIdentity:
                                   for o in by_id.values()
                                   if o.id != tgt.id and o.det.get('feat') is not None),
                                  default=-1.0)
-                if best_other > s or s < self.switch_thresh - 0.15:
+                # A tracker can only swap the target onto ANOTHER PERSON, so a
+                # switch needs a competitor that now looks more like the
+                # target. A low score with nobody better in view is a new
+                # view of the same person (close range, turned round): keep
+                # tracking, just do not learn it. (2026-11-12: alone at
+                # 0.7 m after a memory seeded at 3-5 m from behind, the
+                # earlier rule 's < 0.40 -> switch' dropped the target.)
+                if best_other > s + 0.10 and best_other >= self.switch_thresh:
                     self._low_run = 0
                     return 'switch'
         return 'tracking'

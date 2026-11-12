@@ -284,3 +284,17 @@ def test_depth_gate_stops_track_takeover():
     Track._next_id = 1
     withg = _pass_in_front(True)
     assert all(len(v) == 1 for v in withg.values()), withg
+
+
+def test_identity_low_score_alone_is_not_a_switch():
+    """A new view of the target (low score) with nobody else in view must
+    not drop the target: a tracker cannot swap onto nobody."""
+    fa, fb = appearance(40), appearance(41)
+    idn = TargetIdentity(switch_frames=4)
+    idn.lock(1)
+    for i in range(20):
+        idn.step([FakeTrack(1, noisy(fa))], i * 0.1, alive_ids={1})
+    # the same track now looks unlike the memory (e.g. seen close, from the front)
+    evs = [idn.step([FakeTrack(1, noisy(fb))], 2 + i * 0.1, alive_ids={1})[0] for i in range(10)]
+    assert 'switch' not in evs and idn.target_id == 1
+    assert idn.score(fb) < 0.3          # and it was not learned

@@ -91,7 +91,9 @@ class PersonFollower(Node):
         p('lost_goto_s', 60.0)
         p('search_wait_s', 60.0)
         p('max_range_m', 5.0)
-        p('acquire_timeout_s', 4.0)
+        p('acquire_timeout_s', 8.0)
+        p('acquire_max_speed', 0.3)
+        p('acquire_still_s', 1.0)
         p('seed_views', 4)
         p('goal_free_cost', 128)
         p('tf_grace_s', 2.0)
@@ -104,7 +106,7 @@ class PersonFollower(Node):
         g = lambda n: self.get_parameter(n).value  # noqa: E731
         for n in ('standoff_m', 'min_distance_m', 'min_speed', 'max_speed', 'speed_gain',
                   'goal_deadband_m', 'lost_after_s', 'lost_hold_s', 'lost_goto_s', 'search_wait_s',
-                  'max_range_m', 'acquire_timeout_s', 'seed_views', 'goal_free_cost', 'tf_grace_s',
+                  'max_range_m', 'acquire_timeout_s', 'acquire_max_speed', 'acquire_still_s', 'seed_views', 'goal_free_cost', 'tf_grace_s',
                   'dry_run', 'odom_frame', 'base_frame', 'behavior_tree'):
             setattr(self, n, g(n))
         self.goal_deadband = math.radians(g('goal_deadband_deg'))
@@ -125,6 +127,8 @@ class PersonFollower(Node):
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE)
         self.pub_status = self.create_publisher(String, '/labrobot/follow_status', latched)
+        self.pub_cmd = self.create_publisher(String, '/labrobot/follow_cmd', 10)
+        self.still_since = None
         self.pub_update = self.create_publisher(PoseStamped, '/goal_update', 10)
         self.pub_speed = self.create_publisher(SpeedLimit, '/speed_limit', 10)
         self.pub_goal = self.create_publisher(PoseStamped, '/labrobot/follow_goal', 10)
@@ -166,12 +170,15 @@ class PersonFollower(Node):
         cmd = msg.data.strip().lower()
         if cmd == 'start':
             if self.state in (IDLE,):
+                self.still_since = None
                 self.enter(ACQUIRE)
                 self.set_status('ACQUIRE: locking the person ahead (stand still in front, '
                                 'within 3.5 m)')
         elif cmd == 'stop':
             self.halt('stopped by operator')
-        elif cmd in ('release', 'reset'):
+        elif cmd in ('release', 'reset') and self.state != IDLE:
+            # (when IDLE there is nothing to stop - and the follower itself
+            # publishes `release` after a failed ACQUIRE)
             self.halt('target released by operator')
 
     def on_target(self, msg):
@@ -399,13 +406,31 @@ class PersonFollower(Node):
         seen = self.target_seen()
 
         if self.state == ACQUIRE:
+            # Follow only someone who stood still in front for acquire_still_s:
+            # the appearance memory starts from these views. On 2026-11-12 a
+            # person walking away at 1 m/s was locked; the memory held only
+            # back views at 3-5 m and they were not followed when they came
+            # back facing the robot.
             st = self.tstate
-            if st.get('track_id') is not None and st.get('gallery', 0) >= self.seed_views and seen:
+            locked = st.get('track_id') is not None and seen
+            still = locked and st.get('speed', 9.0) <= self.acquire_max_speed
+            if not still:
+                self.still_since = None
+            elif self.still_since is None:
+                self.still_since = now
+            if still and st.get('gallery', 0) >= self.seed_views and \
+                    now - self.still_since >= self.acquire_still_s:
                 self.enter(FOLLOW)
                 self.nav_fail = 0
             elif now - self.state_t > self.acquire_timeout_s:
-                self.halt('no person to follow (nobody locked within '
-                          f'{self.acquire_timeout_s:.0f} s; stand 1-3.5 m in front and send start)')
+                # forget the half-learned person, so the next start is fresh
+                self.pub_cmd.publish(String(data='release'))
+                why = ('the person did not stand still' if locked else
+                       'nobody locked: stand 1-3.5 m in front, within ~20 deg')
+                self.halt(f'not following - {why}; send start again')
+            elif locked and not still:
+                self.set_status(f'ACQUIRE: person {st.get("track_id")} locked - stand still '
+                                f'facing the robot (moving {st.get("speed", 0):.1f} m/s)')
             return
 
         if self.state in (LOST, SEARCH, WAIT) and seen:
