@@ -8,7 +8,8 @@ checks the output:
 
   1. empty cloud                      -> command passes unchanged
   2. 50 points in the stop zone       -> zero
-  3. 50 points in the slowdown zone   -> halved
+  3. 50 points 0.25-0.37 m ahead of the bumper -> unchanged (approach model:
+     more than 1.5 s away at 0.10 m/s; no slowdown polygon since 2026-11-12)
   4. 5 points in the stop zone        -> unchanged (noise tolerance)
   5. points at 0.15 m height but beside the robot -> unchanged
   6. cloud stops (source timeout)     -> unchanged (fails OPEN - documented)
@@ -111,8 +112,10 @@ def run_cases():
         ('empty cloud passes', [], lambda v: all(abs(x - 0.10) < 1e-6 for x in v)),
         ('50 pts in stop zone -> 0', block(0.25, 0.33, -0.2, 0.2, 0.6, 50),
          lambda v: all(abs(x) < 1e-6 for x in v)),
-        ('50 pts in slow zone -> half', block(0.45, 0.58, -0.25, 0.25, 0.4, 50),
-         lambda v: all(abs(x - 0.05) < 1e-3 for x in v)),
+        # no slowdown polygon any more; at 0.10 m/s an obstacle 0.25-0.37 m
+        # ahead of the bumper is > 1.5 s away -> approach leaves it alone
+        ('50 pts 0.46-0.58 m ahead pass (approach: >1.5 s)', block(0.46, 0.58, -0.25, 0.25, 0.4, 50),
+         lambda v: all(abs(x - 0.10) < 1e-3 for x in v)),
         ('5 pts in stop zone (noise) pass', block(0.25, 0.33, -0.2, 0.2, 0.6, 5),
          lambda v: all(abs(x - 0.10) < 1e-6 for x in v)),
         ('pts beside the robot pass', block(-0.1, 0.1, 0.40, 0.6, 0.15, 50),

@@ -33,7 +33,13 @@ collision_monitor:
     # Keep publishing zero for this long after a stop, then go quiet (the
     # Arduino watchdog brakes when commands stop anyway).
     stop_pub_timeout: 2.0
-    polygons: [PolygonStop, PolygonSlow, FootprintApproach]
+    # PolygonSlow (below) is NOT used since 2026-11-12: it scales the whole
+    # command, turns included. Next to a desk the startup localisation Spin
+    # (0.15 rad/s) ran at 50% the whole time - ~2 rpm per wheel, below what
+    # the drives hold - and turned 98 deg in 240 s. FootprintApproach covers
+    # forward motion better (it simulates the footprint along the actual
+    # command, rotation included) and does not slow a harmless turn.
+    polygons: [PolygonStop, FootprintApproach]
     # Footprint front edge is x = 0.21, half-width 0.203. Stop zone: 14 cm in
     # front of the bumper, 3.7 cm wider each side. 14 cm covers stopping from
     # the 0.26 m/s controller ceiling: 0.2 s of command latency (5 cm) plus

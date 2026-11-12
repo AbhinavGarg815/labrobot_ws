@@ -244,10 +244,12 @@ local_costmap:
         # cannot see its own bumper) with a time limit instead of forever.
         plugin: spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer
         enabled: true
-        # 30 s outside the view: at 0.06 m/s the robot covers the 0.79 m blind
-        # zone in 13 s, so an obstacle it approached is still remembered when it
-        # gets there.
-        voxel_decay: 30.0
+        # 15 s outside the view: the robot must still remember an obstacle it
+        # approached when it gets there. At the slowest motion (missions,
+        # 0.06 m/s) the 0.79 m blind zone takes 13 s; following at 0.15-0.20
+        # m/s, 4-5 s. Was 30 s (2026-11-12): a person's own leg marks below
+        # the view held the follower for up to 30 s before it set off.
+        voxel_decay: 15.0
         decay_model: 0                # linear
         voxel_size: 0.05              # = costmap resolution
         track_unknown_space: false
@@ -458,10 +460,12 @@ global_costmap:
         # cannot see its own bumper) with a time limit instead of forever.
         plugin: spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer
         enabled: true
-        # 30 s outside the view: at 0.06 m/s the robot covers the 0.79 m blind
-        # zone in 13 s, so an obstacle it approached is still remembered when it
-        # gets there.
-        voxel_decay: 30.0
+        # 15 s outside the view: the robot must still remember an obstacle it
+        # approached when it gets there. At the slowest motion (missions,
+        # 0.06 m/s) the 0.79 m blind zone takes 13 s; following at 0.15-0.20
+        # m/s, 4-5 s. Was 30 s (2026-11-12): a person's own leg marks below
+        # the view held the follower for up to 30 s before it set off.
+        voxel_decay: 15.0
         decay_model: 0                # linear
         voxel_size: 0.05              # = costmap resolution
         track_unknown_space: true
@@ -624,8 +628,17 @@ velocity_smoother:
     feedback: OPEN_LOOP
     # Hard ceiling, independent of the controller. Everything Nav2 emits passes
     # through here, so a mis-tuned controller or a stray teleop cannot exceed it.
-    max_velocity: [0.06, 0.0, 0.3]
-    min_velocity: [-0.06, 0.0, -0.3]
+    #
+    # RAISED for person following (user decision 2026-11-12: up to 0.20 m/s).
+    # This is only the CEILING. Missions still drive at RPP's
+    # desired_linear_vel (0.06, FollowPath below) and turn at
+    # rotate_to_heading_angular_vel (0.3); waypoints.py clears any speed
+    # limit before every leg. Only the follower raises the speed, through
+    # Nav2's /speed_limit, adapted to the person's walking speed.
+    # Kinematic limit 0.314 m/s, 2.29 rad/s; collision monitor stop zone is
+    # sized for 0.26 m/s.
+    max_velocity: [0.20, 0.0, 0.5]
+    min_velocity: [-0.06, 0.0, -0.5]
     # Deliberately gentle. Abrupt direction changes are what make the swivel
     # castors slam round and shove the chassis sideways (measured at up to
     # 9 deg/m on a direction change, Problem 25). Smoothing the command is the
