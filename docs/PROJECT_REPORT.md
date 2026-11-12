@@ -1034,6 +1034,19 @@ live node; 39 ms/frame mean, 44 ms p95).
   reid_thresh 0.72, add_thresh 0.70, switch_thresh 0.55. Re-run: same 3/3
   correct re-identifications (0.3-2.9 s after reappearing), no switch
   events, 35.6 ms/frame. Only one distractor and one outfit so far.
+- **Re-ID model choice, measured** (people1, same lock, thresholds as above):
+  OSNet-AIN x1_0: target p5 0.834 / min 0.578, distractor max 0.601, gap
+  +0.233, re-ID 11.3 ms/frame; OSNet x0_25: p5 0.823 / min 0.478, distractor
+  max 0.626, gap +0.197, 6.1 ms. Both 3/3 correct. **Kept AIN x1_0**: wider
+  margin and a much better worst case; the 5 ms is affordable.
+- **First live dry run with the user (2026-11-12)** exposed two design faults
+  (fixed, commit f90bc52): `start` locked a person walking away at 1 m/s
+  (memory = back views at 3-5 m only), and a low own score with nobody else
+  in view was taken as an identity switch. Now ACQUIRE needs the person
+  standing still 1 s, and a switch needs a better-matching competitor.
+  Live tracker under the full stack: 6-8 fps (camera delivers ~10), 40-50
+  ms/frame, image age 120-165 ms. collision_monitor 8.8% of a core;
+  auto_localise 0.0% after the fix (was 27-35%).
 - Not yet tested: a second person crossing (none took part), the follower
   on hardware, the collision monitor live (needs a bringup).
 
