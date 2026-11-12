@@ -996,6 +996,33 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Speed raised to 0.20 m/s (config) - test blocked by a weak battery (2026-11-12, evening)
+
+User: following "feels too slow"; chose up to 0.20 m/s. Config (commit
+"Follow speed up to 0.20 m/s"): velocity_smoother ceiling 0.06 -> 0.20 m/s and
+0.3 -> 0.5 rad/s (missions unchanged: RPP 0.06 m/s / 0.3 rad/s, speed limit
+cleared per leg); STVL decay 30 -> 15 s; collision monitor slowdown polygon
+removed. Verified live: smoother reports [0.2, 0.0, 0.5]; 0 STVL warnings.
+**Not yet driven at the new speed.** After the restart the localisation
+turns failed three times:
+1. 98 deg in 240 s next to a desk, collision monitor in "slowdown 50%" the
+   whole time -> attributed to the slowdown polygon (2 rpm per wheel), which
+   was removed;
+2. after the user moved the robot to open floor: 200 deg at normal speed,
+   then the stop zone + Spin's "Collision Ahead" - most likely the user
+   standing within 0.35 m (correct behaviour; stand >= 1 m away);
+3. localise.sh: drove to 4 spots, 6 visual closures agreed (map->odom
+   -0.21, +0.99, 90.4 deg), but the last turn rotated **66 deg in 240 s with
+   the collision monitor in normal operation** and the hardware active, no
+   serial errors. The user saw the robot free but barely turning.
+Conclusion: **the battery was low** (~1.5 h of tests; power was lost
+unannounced at 13:52 the same day). That also explains (1) at least in
+part - the slowdown-polygon diagnosis is CONFOUNDED. Its removal is kept on
+its own merits (scaling an in-place turn protects nothing; the approach
+model simulates the actual motion), but it is not proven to be the cause.
+Battery voltage monitoring (backlog) moves up: low battery shows first as
+slow turns failing, then as a power cut.
+
 ### M6.T6 — first person-following drive, 0.06 m/s, user in front (2026-11-12)
 
 `scripts/follow.sh` (driving), start sent remotely after the user said
@@ -3046,7 +3073,8 @@ Parked when work moved to person following:
 | Ring-match corridor alias | Upper-left (-1.2, 5.0) and upper-right (2.8, 5.6) attract scans; free-endpoint penalty tested offline, helps true poses but not this alias; not deployed. | M5.T4 |
 | Blocked-waypoint test on hardware | APPROACHED/BLOCKED logic tested offline only. | M5.T3 |
 | Goal relay live check | Built and tested standalone; verify at next bringup with display frame `odom`. | Goal relay entry |
-| Battery voltage monitoring, wheel slip | Offered earlier, not started. | Open risks |
+| **Battery voltage monitoring** (raised 2026-11-12) | Power lost unannounced at 13:52; the evening tests failed on slow turns with a weak battery. Needs a measured voltage (drive or a divider on the Mega) and a warning / refusal to drive below a threshold. | Speed-raise entry, M6 |
+| Wheel slip | Offered earlier, not started. | Open risks |
 | Gyro bias re-estimation | EKF yaw drifts ~2.5 deg/min at rest ~2 h after bringup: the bias is estimated once at startup. Re-estimate while wheel odometry says the robot is still. | Problem 51 (M6.T1) |
 | OpenBLAS threads in Python nodes | Spin-waiting BLAS workers cost the person tracker 0.9 core; imu_bias_compensator (29%) and others likely the same. Set OPENBLAS_NUM_THREADS=1 in bringup, measure. | M6.T1 |
 
