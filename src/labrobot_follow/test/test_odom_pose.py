@@ -13,7 +13,7 @@ from labrobot_follow.odom_pose import OdomPoseBuffer, compose_camera, quat_to_ro
 
 
 def test_interpolation_and_bounds():
-    b = OdomPoseBuffer(max_extrapolate_s=0.1)
+    b = OdomPoseBuffer(max_extrapolate_s=0.1)   # explicit: the test's bounds assume 0.1
     for i in range(51):                        # 1 s at 50 Hz, driving +x at 0.2 m/s, turning
         t = i * 0.02
         b.add(t, 0.2 * t, 0.0, 0.5 * t)

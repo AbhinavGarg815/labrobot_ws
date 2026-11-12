@@ -996,6 +996,34 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### M6.T6 — first person-following drive, 0.06 m/s, user in front (2026-11-12)
+
+`scripts/follow.sh` (driving), start sent remotely after the user said
+ready, user ~2 m ahead in the corridor (logs: docs/logs/follow_1950.log,
+followrun_drive1.jsonl). **It follows.**
+- Locked person 1 at 2.0 m within 0.1 s; held 18 s ("stand-off blocked":
+  the user's own leg marks from walking to the spot sit BELOW the camera's
+  frustum at 0.8 m - the blind-zone memory - and wait for the 30 s decay);
+  then drove 0.69 m at exactly 0.06 m/s, steering to the person, and stopped
+  at 1.39-1.45 m (stand-off 1.2 + goal tolerance 0.25).
+- User stepped back: followed again (step 2: 0.88 m, stopped at 1.4 m;
+  later 1.09 m total, stopped at 1.27 m). Collision monitor: slowdowns only.
+- User stepped in to ~0.6 m: **lost** (too close to detect) -> held 2 s ->
+  **SEARCH spin with the person right in front** (safe - corners sweep 0.29 m
+  - but wrong). Re-identified as person 7 when they stood back in view (after
+  27 s of spinning) and followed again.
+- Two 0.2 s LOST flickers at 1.1 m with 31 'no pose' frames in 10 s.
+- 'stop' -> IDLE at once, no further drive commands.
+- Tracker under the full stack after the DDS fix: 14.5-15 fps, 35-37
+  ms/frame, image age ~121 ms (was 6-8 fps before Problem 54's fix).
+Fixes (dry run 15/15, incl. a new case): lost while closer than the
+stand-off -> WAIT in place "too close to see; please step back", never
+SEARCH; WAIT keeps that reason in its status; odometry buffer may hold the
+last pose 0.25 s (was 0.1 s - under load images outran it).
+Open: the 18 s initial hold (decay 30 s vs blind-zone memory - a tuning
+trade-off, not changed); speed cap still 0.06 m/s; walking-pace tests and
+the person-speed-adaptive speed not yet exercised (cap = floor).
+
 ### Problem 55 — every mission goal aborted after the follow goal checker was added (2026-11-12)
 
 First drive with the new stack (`nav_goal.py --forward 0.6`): the robot

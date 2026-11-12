@@ -193,7 +193,17 @@ def main():
         s = last_status(n, t_close)
         check('0.6 m: holding - too close', 'too close' in s, s)
 
-        run(1.0, lambda k: rel(2.5, 0))
+        # lost while close (camera too close to see): wait, never spin
+        t_close_gone = time.monotonic()
+        while time.monotonic() - t_close_gone < 5.0:
+            n.send_person(None, (0, 0), False)
+            rclpy.spin_once(n, timeout_sec=0.05)
+            time.sleep(0.05)
+        s = last_status(n, t_close_gone)
+        seen_close = {x.split(':')[0] for t, x in n.status if t >= t_close_gone}
+        check('lost at 0.6 m -> WAIT too close, no SEARCH', 'too close to see' in s
+              and 'SEARCH' not in seen_close, f'{s} {sorted(seen_close)}')
+        run(2.0, lambda k: rel(2.5, 0))
         t_gone = time.monotonic()
         seen_states = set()
         while time.monotonic() - t_gone < 60:

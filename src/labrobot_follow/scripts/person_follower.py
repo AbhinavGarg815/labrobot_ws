@@ -129,6 +129,7 @@ class PersonFollower(Node):
         self.pub_status = self.create_publisher(String, '/labrobot/follow_status', latched)
         self.pub_cmd = self.create_publisher(String, '/labrobot/follow_cmd', 10)
         self.still_since = None
+        self.wait_reason = 'watching for the person'
         self.pub_update = self.create_publisher(PoseStamped, '/goal_update', 10)
         self.pub_speed = self.create_publisher(SpeedLimit, '/speed_limit', 10)
         self.pub_goal = self.create_publisher(PoseStamped, '/labrobot/follow_goal', 10)
@@ -455,10 +456,11 @@ class PersonFollower(Node):
             done = self.spin_done or (self.dry_run and now > getattr(self, 'spin_dry_until', 0))
             self.set_status('SEARCH: turning 360 deg' + (' (dry run)' if self.dry_run else ''))
             if done and not self.spin_pending:
+                self.wait_reason = 'watching for the person'
                 self.enter(WAIT)
         elif self.state == WAIT:
             left = self.search_wait_s - (now - self.state_t)
-            self.set_status(f'WAIT: watching for the person ({left:.0f} s left)')
+            self.set_status(f'WAIT: {self.wait_reason} ({left:.0f} s left)')
             if left <= 0:
                 self.halt('target lost (searched and waited); send start to follow someone')
 
@@ -509,6 +511,19 @@ class PersonFollower(Node):
             else:
                 pxy = self.last_seen[0]
                 d = float(np.linalg.norm(pxy - robot_xy))
+                if d < self.standoff_m:
+                    # Lost while CLOSE: the person is almost certainly still
+                    # right there, too close for the camera (at 0.6 m it sees
+                    # only knees to hips). Searching would spin with them in
+                    # front of the robot (first driving test, 2026-11-12).
+                    # Wait in place instead; re-ID picks them up when they
+                    # step back.
+                    self.cancel_nav()
+                    self.enter(WAIT)
+                    self.wait_reason = (f'lost you at {d:.1f} m - too close to see; '
+                                        'please step back')
+                    self.set_status(f'WAIT: {self.wait_reason}')
+                    return
                 if d <= self.standoff_m + 0.2:
                     self.lost_phase = 'arrived'
                 else:

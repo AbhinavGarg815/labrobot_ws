@@ -29,7 +29,11 @@ def yaw_of(x, y, z, w):
 class OdomPoseBuffer:
     """Planar robot poses (t, x, y, yaw) with interpolation at a stamp."""
 
-    def __init__(self, maxlen=500, max_extrapolate_s=0.1):
+    # 0.25 s, not 0.1: under load the newest odometry can lag an image by more
+    # than 0.1 s; with 0.1 the tracker skipped 31 frames in 10 s and the target
+    # flickered LOST (first driving test, 2026-11-12). Holding the last pose
+    # for 0.25 s at 0.06-0.26 m/s is 1.5-6.5 cm.
+    def __init__(self, maxlen=500, max_extrapolate_s=0.25):
         self.buf = deque(maxlen=maxlen)       # 500 at 50 Hz = 10 s
         self.max_extrapolate_s = max_extrapolate_s
 

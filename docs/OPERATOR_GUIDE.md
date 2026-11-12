@@ -147,9 +147,11 @@ were picked on**: after building a new map, pick them again.
 
 ### 3.4 Person following (in development - see the status line below)
 
-**Status 2026-11-11:** perception and the follower are built and tested
-without motion (dry run). Driving tests have not been done yet: run it only
-with `--dry-run` or `--tracker-only` until this line says otherwise.
+**Status 2026-11-12:** first driving test done at 0.06 m/s with the user
+in front: it locks on, drives to 1.2-1.5 m from you and stops, follows when
+you step back, holds when you are close, and re-identifies you after losing
+you. Still a test feature: **always be in front of it, with a stop ready**.
+Faster speeds are not tested yet - keep the default cap (0.06 m/s).
 
 The robot follows one person, keeping **1.2 m** behind them, and stops if they
 come closer than **0.8 m**. It is slow (test cap 0.06 m/s): **walk slowly and
@@ -197,6 +199,8 @@ person it follows**, green = others, with their ids and distance) and, in the
 | `LOST` | it cannot see you: waits 2 s, then drives to where you were last seen |
 | `SEARCH` | turning a full circle, starting towards where you went |
 | `WAIT` | watching for you for 60 s |
+| `WAIT: lost you at 0.6 m - too close to see; please step back` | you came so close the camera cannot see you: step back to ~1.5 m |
+| `FOLLOW: ... stand-off blocked all round - holding` at the start | normal for up to ~30 s: the floor where you walked is still marked (the camera cannot see right in front of itself); it moves once that fades |
 | `IDLE: target lost` | gave up; press start again |
 | `stand-off blocked all round - holding` | the spot 1.2 m in front of you is not free (furniture, or the costmap still remembers you there): it stays and faces you |
 
