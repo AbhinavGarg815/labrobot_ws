@@ -64,6 +64,15 @@ def read_bag(path):
         yield topic, deserialize_message(data, get_message(types[topic])), t
 
 
+def _reid_cols(pipe, tr):
+    """Appearance score of this track's detection against the target memory
+    (and the best distractor), for threshold tuning; '' when not available."""
+    f = tr.det.get('feat') if tr.matched_this_frame else None
+    if f is None or not pipe.identity.has_model:
+        return ''
+    return f'{pipe.identity.score(f):.3f}'
+
+
 def draw(rgb, tracks, pipe, st, t):
     img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     for tr in tracks:
@@ -93,7 +102,7 @@ def main():
     ap.add_argument('--lock-at', type=float, default=None)
     ap.add_argument('--select-at', default=None, help='T:ID')
     ap.add_argument('--video', action='store_true')
-    ap.add_argument('--reid-thresh', type=float, default=0.60)
+    ap.add_argument('--reid-thresh', type=float, default=0.72)
     ap.add_argument('--reid-margin', type=float, default=0.05)
     a = ap.parse_args()
 
@@ -118,7 +127,8 @@ def main():
     tw = csv.writer(tcsv)
     fw.writerow(['t', 'state', 'event', 'track_id', 'range', 'bearing_deg', 'x', 'y', 'speed',
                  'reid_score', 'gallery', 'people', 'ms_detect', 'ms_reid', 'ms_track'])
-    tw.writerow(['t', 'id', 'x0', 'y0', 'x1', 'y1', 'score', 'clean', 'range', 'bearing_deg', 'target'])
+    tw.writerow(['t', 'id', 'x0', 'y0', 'x1', 'y1', 'score', 'clean', 'range', 'bearing_deg', 'target',
+                 'reid_vs_target'])
     events = open(out / 'events.txt', 'w')
     video = None
     n_frames = n_notf = 0
@@ -188,7 +198,8 @@ def main():
             tw.writerow([f'{t:.3f}', tr.id, *[f'{v:.0f}' for v in b], f'{tr.score:.2f}',
                          int(bool(tr.det.get('clean'))),
                          f'{m[3]:.3f}' if m else '', f'{math.degrees(m[4]):.1f}' if m else '',
-                         int(tr.id == pipe.identity.target_id)])
+                         int(tr.id == pipe.identity.target_id),
+                         _reid_cols(pipe, tr)])
         if a.video:
             frame = draw(rgb, tracks, pipe, st, t)
             if video is None:

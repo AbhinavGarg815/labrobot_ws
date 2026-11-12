@@ -35,8 +35,14 @@ done
 if ! python3 -c "import sys; v=float('$MAXV'); sys.exit(0 if 0.0 < v <= 0.26 else 1)"; then
     echo "--max-speed must be in (0, 0.26] m/s (the controller ceiling)"; exit 1
 fi
-if ! grep -q READY docs/logs/bringup_status 2>/dev/null; then
-    echo "The stack is not up (docs/logs/bringup_status has no READY)."
+# READY in bringup_status is not enough: the file survives a reboot (it said
+# READY from the day before on 2026-11-12, with nothing running). It must be
+# newer than this boot, and Nav2 must actually be running.
+BOOT=$(( $(date +%s) - $(cut -d. -f1 /proc/uptime) ))
+if ! grep -q READY docs/logs/bringup_status 2>/dev/null \
+        || [[ $(stat -c %Y docs/logs/bringup_status) -lt $BOOT ]] \
+        || ! pgrep -x bt_navigator >/dev/null; then
+    echo "The stack is not up (no READY since this boot, or bt_navigator not running)."
     echo "Start it first: scripts/bringup_nav.sh --localization"; exit 1
 fi
 for f in ~/labrobot_models/engines/${DET}_480x640_fp16.engine ~/labrobot_models/engines/${REID}_fp16.engine; do

@@ -34,10 +34,18 @@ import numpy as np
 
 
 class TargetIdentity:
+    # Thresholds from the people1 recording (M6.T2; OSNet-AIN x1_0, cosine of
+    # unit embeddings): the target's own scores p5 0.843, min 0.604; a
+    # distractor (seated, 2.4 m) max 0.613, median 0.518. Re-identifications
+    # happened at 0.78-0.95.
+    #   reid_thresh 0.72  - 0.11 above the distractor's maximum
+    #   add_thresh 0.70   - learn only confident views (1% of the target's)
+    #   switch_thresh 0.55 - target never below it; distractor mostly is
+    # One recording, one distractor: re-check with similarly dressed people.
     def __init__(self, short_len=20, short_period_s=0.3, long_len=40,
                  long_period_s=1.0, long_novelty=0.85, distractor_len=200,
-                 distractor_period_s=0.5, reid_thresh=0.60, reid_margin=0.05,
-                 reid_votes=3, add_thresh=0.45, switch_thresh=0.40,
+                 distractor_period_s=0.5, reid_thresh=0.72, reid_margin=0.05,
+                 reid_votes=3, add_thresh=0.70, switch_thresh=0.55,
                  switch_frames=6, top_k=3):
         self.short = deque(maxlen=short_len)
         self.short_period_s = short_period_s

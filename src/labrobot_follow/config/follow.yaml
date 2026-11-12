@@ -9,7 +9,7 @@ person_tracker:
     click_radius_m: 0.8            # Foxglove "Publish point" must land this close
     reid_gate_base_m: 1.0          # re-acquire only where the target could be:
     reid_gate_speed_mps: 1.5       #   base + walking speed x time lost
-    reid_thresh: 0.60              # re-ID: score needed (tuned on recordings, M6.T2)
+    reid_thresh: 0.72              # re-ID: score needed (people1: distractor max 0.61, target p5 0.84)
     reid_margin: 0.05              # ... and lead over the best other person
     debug_rate: 5.0                # Hz, debug image / markers, only while viewed
     perf_log_s: 10.0

@@ -1020,11 +1020,20 @@ live node; 39 ms/frame mean, 44 ms p95).
   8, 10 at 70.1 / 83.1 / 97.7 s); the seated person (tracks 1, 3, 6, 12) was
   **never** taken as the target. Target tracked in 1144 of 1530 frames after
   the lock (the rest: out of view by the script, or re-acquiring).
-- Range against tape marks (as overlaid, camera-frame range at the time):
-  3.10 / ~2.14 / 1.34 / 1.08 m at the 3.0 / 2.0 / 1.2 / 1.0 m marks, i.e.
-  +0.08 to +0.14 m. Range is now reported as FLOOR distance from the camera;
-  the error must be re-measured with that (next session), then the 0.10 m
-  body-centre offset checked.
+- **Range calibration (2026-11-12).** Floor distance from the camera, at the
+  standing plateaus (sd 1-2 cm per plateau; +-8-15 cm per frame at 3 m):
+  with the 0.10 m body offset (a torso) errors were +6 / +8 / +14 / +5 cm at
+  the 3.0 / 2.0 / 1.2 / 1.0 m marks (mean +8). Depth lands on the thighs
+  here; offset set to 0.02 m (geometry.BODY_HALF_DEPTH_M): **-2.0 / +0.1 /
+  +6.5 / -2.4 cm**. Scatter ~ how precisely a mark is stood on.
+- **Re-ID thresholds from data** (score of each track's view against the
+  target memory, logged by eval_follow_bag.py): target p5 0.843, median
+  0.959, min 0.604 (n=1296); distractor (seated) median 0.518, max 0.613
+  (n=1440). Defaults 0.60 / 0.45 had no margin (re-acquire threshold below
+  the distractor's max; learning threshold below its median). Now
+  reid_thresh 0.72, add_thresh 0.70, switch_thresh 0.55. Re-run: same 3/3
+  correct re-identifications (0.3-2.9 s after reappearing), no switch
+  events, 35.6 ms/frame. Only one distractor and one outfit so far.
 - Not yet tested: a second person crossing (none took part), the follower
   on hardware, the collision monitor live (needs a bringup).
 

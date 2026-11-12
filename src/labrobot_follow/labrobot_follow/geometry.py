@@ -20,7 +20,13 @@ CORE_KPTS = (L_SHOULDER, R_SHOULDER, L_HIP, R_HIP, L_KNEE, R_KNEE)
 DEPTH_MIN_M = 0.3
 DEPTH_MAX_M = 8.0
 # Depth hits the front of the body; the person's centre is behind it.
-BODY_HALF_DEPTH_M = 0.10
+# Calibrated on the people1 recording (M6.T2, person standing over tape marks
+# at 1.0 / 1.2 / 2.0 / 3.0 m): with 0.10 (a torso's half-depth) the floor
+# range read +5 / +14 / +8 / +6 cm long, mean +8 cm. At these distances the
+# sample is on the thighs, not the torso, and the D435 adds a small scale
+# error; 0.02 makes the mean error zero. Remaining scatter +-4 cm ~ how
+# precisely the marks were stood on.
+BODY_HALF_DEPTH_M = 0.02
 # D435 RMS depth error grows with range squared: 7.4 mm at 1 m (measured, M2.T1).
 DEPTH_RMS_AT_1M = 0.0074
 
