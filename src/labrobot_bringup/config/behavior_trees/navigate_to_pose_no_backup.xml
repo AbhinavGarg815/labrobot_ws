@@ -23,7 +23,11 @@
           </RecoveryNode>
         </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
-          <FollowPath path="{path}" controller_id="FollowPath"/>
+          <!-- goal_checker_id is REQUIRED since a second checker exists
+               (follow_goal_checker, person following): with two, Humble's
+               controller rejects an empty id and every goal aborted at once
+               (2026-11-12 regression drive). -->
+          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="general_goal_checker"/>
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>
       </PipelineSequence>

@@ -10,7 +10,8 @@
     them in the costmap is a safety decision (PROJECT_REPORT M6).
   * Replanning at 2 Hz rather than 1: the goal moves with a walking person.
   * After FollowPath succeeds (robot at the stand-off and facing the
-    person), a 0.5 s Wait before following again. In follow_point.xml the
+    person), a 1 s Wait before following again (Humble's Wait takes WHOLE
+    seconds: "0.5" was read as 0 and the loop re-ran every ~70 ms). In follow_point.xml the
     succeeded FollowPath is re-ticked at the BT loop rate (100 Hz), sending a
     new controller goal each time - CPU this robot does not have.
   FollowPath uses `follow_goal_checker` (looser than missions' 0.10 m), so
@@ -29,7 +30,7 @@
       <KeepRunningUntilFailure>
         <Sequence>
           <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="follow_goal_checker"/>
-          <Wait wait_duration="0.5"/>
+          <Wait wait_duration="1"/>
         </Sequence>
       </KeepRunningUntilFailure>
     </PipelineSequence>

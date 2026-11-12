@@ -996,6 +996,27 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 55 — every mission goal aborted after the follow goal checker was added (2026-11-12)
+
+First drive with the new stack (`nav_goal.py --forward 0.6`): the robot
+turned ~137 deg and moved 3 cm; Nav2 aborted after 48 s. Log: "FollowPath
+called with goal_checker name '' ... which does not exist. Available goal
+checkers are: general_goal_checker, follow_goal_checker" - with TWO goal
+checkers Humble's controller has no default, and the mission tree's
+FollowPath named none; the turn was the recovery Spin. Fix:
+navigate_to_pose_no_backup.xml names `general_goal_checker`. (bt_navigator
+re-reads a tree from disk when a goal brings a different tree, so no restart
+was needed.) Re-run: **SUCCEEDED in 13.0 s, 0.506 m, 95 mm / 5.2 deg from the
+goal** - Nav2 drives with STVL, the DDS profile and the collision monitor.
+The mission localisation gate refused twice at this spot even right after a
+successful re-localisation (53-55% of the view near mapped obstacles, needs
+60%: furniture moved since the 27 Oct map); the user allowed skipping it for
+this one relative drive. Fresh map v7 (backlog) is the fix.
+**Follow tree live check** (tools/check_follow_bt.py: a follow goal at the
+robot's own pose, 7 goal updates, cancelled after 15 s): loads and runs,
+robot moved 0 mm / 0.0 deg. Defect found: Humble's Wait takes whole seconds,
+"0.5" was read as 0 and FollowPath re-ran every ~70 ms; now 1 s.
+
 ### Problem 54 — half of every large message was lost; STVL never "current" (2026-11-12)
 
 Fixing Problem 53 with STVL (user decision) exposed two more faults.
