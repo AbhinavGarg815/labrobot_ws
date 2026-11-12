@@ -175,8 +175,11 @@ person it follows**, green = others, with their ids and distance) and, in the
 
 **Choosing who to follow:**
 - stand **1-3.5 m in front of the robot, within ~20 deg of straight ahead**,
-  nearest of anyone there, and press **start**. It collects a few views of you
-  (about a second) before moving;
+  nearest of anyone there, **stand still facing it**, and press **start**. It
+  follows only after you have stood still for a second (it learns how you
+  look from those views). If you keep moving it says `ACQUIRE: ... stand
+  still`, and after 8 s gives up (`not following - the person did not stand
+  still`): press start again;
 - or pick someone by id: publish `{"data": "select 3"}` (the id is on their box
   in the debug image), then **start**;
 - or in the 3D panel use *Publish point* on topic `/clicked_point` near the
@@ -187,7 +190,7 @@ person it follows**, green = others, with their ids and distance) and, in the
 | Status | Meaning |
 |---|---|
 | `IDLE` | not following; waiting for start |
-| `ACQUIRE` | locking on to the person in front |
+| `ACQUIRE` | locking on to the person in front - stand still facing it |
 | `FOLLOW: person N at D m ...` | following; the speed shown adapts to how fast you walk |
 | `FOLLOW: holding - too close` | you are within 0.8 m: it waits |
 | `FALLING BEHIND, please wait` | you are more than 5 m away: stop and let it catch up |
@@ -195,6 +198,7 @@ person it follows**, green = others, with their ids and distance) and, in the
 | `SEARCH` | turning a full circle, starting towards where you went |
 | `WAIT` | watching for you for 60 s |
 | `IDLE: target lost` | gave up; press start again |
+| `stand-off blocked all round - holding` | the spot 1.2 m in front of you is not free (furniture, or the costmap still remembers you there): it stays and faces you |
 
 It only takes you back as the target if it **recognises your appearance**
 (re-identification), never just because someone is standing where you were.
