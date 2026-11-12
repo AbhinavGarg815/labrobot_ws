@@ -11,13 +11,22 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import SetEnvironmentVariable, DeclareLaunchArgument
 from launch.conditions import UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 ENGINES = os.path.expanduser('~/labrobot_models/engines')
 
+
+
+def _dds_profile():
+    """Fast DDS shared-memory segment big enough for clouds and raw images
+    (config/fastdds_shm.xml explains why). Every node launched after this
+    inherits it."""
+    return SetEnvironmentVariable(
+        'FASTRTPS_DEFAULT_PROFILES_FILE',
+        os.path.join(get_package_share_directory('labrobot_bringup'), 'config', 'fastdds_shm.xml'))
 
 def generate_launch_description():
     cfg = os.path.join(get_package_share_directory('labrobot_follow'), 'config', 'follow.yaml')
@@ -47,4 +56,4 @@ def generate_launch_description():
             'dry_run': PythonExpression(["'", LaunchConfiguration('dry_run'), "'.lower() == 'true'"]),
             'max_speed': PythonExpression(['float(', LaunchConfiguration('max_speed'), ')']),
         }])
-    return LaunchDescription(args + [tracker, follower])
+    return LaunchDescription([_dds_profile()] + args + [tracker, follower])

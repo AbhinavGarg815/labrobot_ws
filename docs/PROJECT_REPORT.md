@@ -996,6 +996,48 @@ at 10 cm/side, 3-7 cm right-of-route tracking (planner bias fixed by Smac 2D;
 controller corner-cutting vs replanning not yet separated - instrumentation
 in place: gap_edges --save, record_path plans history, gap_run_report).
 
+### Problem 54 — half of every large message was lost; STVL never "current" (2026-11-12)
+
+Fixing Problem 53 with STVL (user decision) exposed two more faults.
+**1. Fast DDS shared memory too small for this robot's messages.** STVL's
+staleness check fired constantly. Measured on the live robot: a RELIABLE
+subscriber received the depth cloud at 15.0 Hz (max gap 0.11 s), a
+BEST-EFFORT one - which is what every Nav2 costmap layer, the collision
+monitor and the person tracker use - at 7.4 Hz (gaps to 0.47 s). Cause: Fast
+DDS's SHM transport defaults to a 512 KB segment per participant and the
+publisher allocates each message in its own segment; the cloud (~700 KB) and
+a raw colour image (921 KB) do not fit, so they go over UDP loopback in
+fragments, and best-effort readers lose many. Isolated test (700 KB, 15 Hz,
+best-effort): 13.2 Hz default vs 14.8 Hz with a 16 MB segment.
+Fix: `labrobot_bringup/config/fastdds_shm.xml` (8 MB SHM segment + UDPv4),
+set as FASTRTPS_DEFAULT_PROFILES_FILE by robot.launch.py,
+navigation.launch.py and follow.launch.py (validated: no XML errors, 14.8 Hz).
+After a full restart: best-effort cloud **7.4 -> 13.7 Hz**, raw colour 13.7
+Hz, max gap 0.08 s. (This also explains the long-standing "colour 8-10 Hz
+LOW" in check_system.py.)
+**2. A bug in STVL 2.3.4 (humble).** With delivery fixed the warning stayed
+("buffer updated in 71.4 s"). Source (measurement_buffer.cpp,
+BufferROSCloud): for a clearing-only source it returns ("no need to buffer
+points") BEFORE setting `_last_updated`, so a clearing source with
+expected_update_rate > 0 is stale forever. Fix: expected_update_rate 0.0 on
+the clearing sources; fail-closed kept on the marking sources (same topic,
+1.0 s). After restart: **0 staleness warnings**.
+**STVL verified live (robot still):** the phantom wall of Problem 53 gone - a
+clear corridor where the camera sees clear floor; the user walked across at
+~1 m and left: their path cleared; marks either side at 0.6-1.45 m ahead
+are REAL objects at the edge of the depth view (2566 / 2698 cloud points at
+bearing 39-46 / -31..-44 deg, z 0.14-0.85 m; tools/depth_ahead.py does not
+show them because it reads the colour-aligned depth, 56 deg wide).
+Outside-view decay (30 s) checked in the source (TemporalClearAndGenerate-
+Costmap); not yet watched live. CPU: controller_server 23%, planner 19%.
+**My mistake on the way:** after a Nav2-only restart I deleted the
+fastrtps SHM files that `fuser` said no process held open. Port files are not
+held open: the running EKF lost its inputs at that second (19:17:37) and
+stopped publishing odom; recovery needed a full restart. Rule: delete
+/dev/shm/fastrtps_* only with EVERY ROS node stopped (as the operator guide
+says). Also: a Nav2-only restart hung once in "Configuring bt_navigator"
+(Problem 47 again) - full restarts are the reliable path.
+
 ### Problem 53 — people leave permanent marks in the local costmap (2026-11-12)
 
 Second live dry run (robot still, user walking the script; log

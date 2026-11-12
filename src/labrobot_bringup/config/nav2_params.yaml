@@ -229,8 +229,76 @@ local_costmap:
       # 10% safety margin, which is the right order given the robot's own
       # position error is 67-99 mm.
       footprint_padding: 0.01
-      plugins: [voxel_layer, inflation_layer]
+      plugins: [stvl_layer, inflation_layer]
 
+      stvl_layer:
+        # SPATIO-TEMPORAL VOXEL LAYER (M6, Problem 53), replacing nav2's voxel /
+        # obstacle layer. Those drop every point outside min/max_obstacle_height
+        # BEFORE raytracing, so floor returns never clear anything: a person who
+        # walked within ~1.5 m left leg marks that never went away (2026-11-12:
+        # 0.35-1.45 m ahead all lethal, floor empty). STVL clears by the camera's
+        # FRUSTUM instead - voxels inside the view that are not re-observed decay
+        # fast (decay_acceleration) - and lets voxels OUTSIDE the view (the blind
+        # zone right in front, beside, behind) fade only after voxel_decay. That
+        # keeps the old principle (remember what was seen a moment ago, the robot
+        # cannot see its own bumper) with a time limit instead of forever.
+        plugin: spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer
+        enabled: true
+        # 30 s outside the view: at 0.06 m/s the robot covers the 0.79 m blind
+        # zone in 13 s, so an obstacle it approached is still remembered when it
+        # gets there.
+        voxel_decay: 30.0
+        decay_model: 0                # linear
+        voxel_size: 0.05              # = costmap resolution
+        track_unknown_space: false
+        mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1         # max with the layers below
+        origin_z: 0.0
+        publish_voxel_map: false      # CPU; turn on to inspect in Foxglove
+        transform_tolerance: 0.3
+        mapping_mode: false
+        map_save_duration: 60.0
+        observation_sources: depth_mark depth_clear
+        depth_mark:
+          data_type: PointCloud2
+          topic: /camera/camera/depth/color/points
+          marking: true
+          clearing: false
+          # same marking band as before - see the old voxel layer notes below
+          obstacle_range: 2.0
+          min_obstacle_height: 0.10
+          max_obstacle_height: 0.90
+          # FAIL CLOSED: no cloud for 1 s -> layer not current -> Nav2 will not drive
+          expected_update_rate: 1.0
+          observation_persistence: 0.0
+          inf_is_valid: false
+          filter: voxel               # downsample to one point per voxel (CPU)
+          voxel_min_points: 0
+          clear_after_reading: true
+        depth_clear:
+          data_type: PointCloud2
+          topic: /camera/camera/depth/color/points
+          marking: false
+          clearing: true
+          model_type: 0               # depth camera frustum
+          min_z: 0.30                 # m along the optical axis: the D435's minimum depth
+          max_z: 3.5                  # = the old raytrace_max_range
+          # NARROWER than the sensor (87 x 58 deg) on purpose: clearing outside the
+          # true view would erase obstacles the camera cannot see.
+          horizontal_fov_angle: 1.40  # 80 deg
+          vertical_fov_angle: 0.94    # 54 deg
+          decay_acceleration: 5.0     # 1/s^2: seen-free voxels vanish within ~1 s
+          # 0 = no staleness check ON THIS SOURCE. STVL (humble, 2.3.4)
+          # MeasurementBuffer::BufferROSCloud returns early for clearing-only
+          # sources BEFORE it sets _last_updated, so with 1.0 here the buffer
+          # reports stale forever ("buffer updated in 71.4s"), however many
+          # clouds arrive. Fail-closed is kept by depth_mark above: the SAME
+          # topic, with expected_update_rate 1.0.
+          expected_update_rate: 0.0
+
+      # PREVIOUS layer, kept for reference and rollback (not in `plugins`):
+      # its height/range choices are carried over into stvl_layer above.
       voxel_layer:
         plugin: nav2_costmap_2d::VoxelLayer
         enabled: true
@@ -375,7 +443,74 @@ global_costmap:
       # 10% safety margin, which is the right order given the robot's own
       # position error is 67-99 mm.
       footprint_padding: 0.01
-      plugins: [static_layer, obstacle_layer, inflation_layer]
+      plugins: [static_layer, stvl_layer, inflation_layer]
+
+      stvl_layer:
+        # SPATIO-TEMPORAL VOXEL LAYER (M6, Problem 53), replacing nav2's voxel /
+        # obstacle layer. Those drop every point outside min/max_obstacle_height
+        # BEFORE raytracing, so floor returns never clear anything: a person who
+        # walked within ~1.5 m left leg marks that never went away (2026-11-12:
+        # 0.35-1.45 m ahead all lethal, floor empty). STVL clears by the camera's
+        # FRUSTUM instead - voxels inside the view that are not re-observed decay
+        # fast (decay_acceleration) - and lets voxels OUTSIDE the view (the blind
+        # zone right in front, beside, behind) fade only after voxel_decay. That
+        # keeps the old principle (remember what was seen a moment ago, the robot
+        # cannot see its own bumper) with a time limit instead of forever.
+        plugin: spatio_temporal_voxel_layer/SpatioTemporalVoxelLayer
+        enabled: true
+        # 30 s outside the view: at 0.06 m/s the robot covers the 0.79 m blind
+        # zone in 13 s, so an obstacle it approached is still remembered when it
+        # gets there.
+        voxel_decay: 30.0
+        decay_model: 0                # linear
+        voxel_size: 0.05              # = costmap resolution
+        track_unknown_space: true
+        mark_threshold: 0
+        update_footprint_enabled: true
+        combination_method: 1         # max with the layers below
+        origin_z: 0.0
+        publish_voxel_map: false      # CPU; turn on to inspect in Foxglove
+        transform_tolerance: 0.3
+        mapping_mode: false
+        map_save_duration: 60.0
+        observation_sources: depth_mark depth_clear
+        depth_mark:
+          data_type: PointCloud2
+          topic: /camera/camera/depth/color/points
+          marking: true
+          clearing: false
+          # same marking band as before - see the old voxel layer notes below
+          obstacle_range: 2.0
+          min_obstacle_height: 0.10
+          max_obstacle_height: 0.90
+          # FAIL CLOSED: no cloud for 1 s -> layer not current -> Nav2 will not drive
+          expected_update_rate: 1.0
+          observation_persistence: 0.0
+          inf_is_valid: false
+          filter: voxel               # downsample to one point per voxel (CPU)
+          voxel_min_points: 0
+          clear_after_reading: true
+        depth_clear:
+          data_type: PointCloud2
+          topic: /camera/camera/depth/color/points
+          marking: false
+          clearing: true
+          model_type: 0               # depth camera frustum
+          min_z: 0.30                 # m along the optical axis: the D435's minimum depth
+          max_z: 3.5                  # = the old raytrace_max_range
+          # NARROWER than the sensor (87 x 58 deg) on purpose: clearing outside the
+          # true view would erase obstacles the camera cannot see.
+          horizontal_fov_angle: 1.40  # 80 deg
+          vertical_fov_angle: 0.94    # 54 deg
+          decay_acceleration: 5.0     # 1/s^2: seen-free voxels vanish within ~1 s
+          # 0 = no staleness check ON THIS SOURCE. STVL (humble, 2.3.4)
+          # MeasurementBuffer::BufferROSCloud returns early for clearing-only
+          # sources BEFORE it sets _last_updated, so with 1.0 here the buffer
+          # reports stale forever ("buffer updated in 71.4s"), however many
+          # clouds arrive. Fail-closed is kept by depth_mark above: the SAME
+          # topic, with expected_update_rate 1.0.
+          expected_update_rate: 0.0
+
 
       # The RTAB-Map occupancy grid. This is the map the robot built.
       static_layer:
@@ -383,8 +518,8 @@ global_costmap:
         map_subscribe_transient_local: true
         subscribe_to_updates: true
 
-      # Live obstacles on top of the static map, so something moved into the
-      # room since mapping still blocks a global plan.
+      # PREVIOUS live-obstacle layer, kept for reference/rollback (not in
+      # `plugins`; replaced by stvl_layer above - same reason as the local one).
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
         enabled: true

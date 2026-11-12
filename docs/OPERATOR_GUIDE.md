@@ -390,7 +390,8 @@ Quick searches: `grep -E "Goal (succeeded|failed)" docs/logs/nav_*_nav2.log`,
 | Localisation: `NOT localised after 4 viewpoints` | Drive or carry the robot to open floor with structure in view; `scripts/localise.sh`. If the pose shown is right: `--confirm` / `--confirm-geometry`. |
 | `only turned N deg (obstacle within ~0.3 m?)` or `Collision Ahead - Exiting Spin` with nothing there | Stale obstacles in the local costmap (often after a hand move). Clear it: `ros2 service call /local_costmap/clear_entirely_local_costmap nav2_msgs/srv/ClearEntireCostmap "{}"` — only if the space really is clear. |
 | Robot will not move at all; `list_hardware_components` not `active` | The motor driver stopped. `scripts/stop_robot.sh`, then start again. Look for `serial write failed (...)` in the robot log. |
-| Bringup hangs, or Nav2 never becomes active after a partial restart | Stale DDS files: `scripts/stop_robot.sh`, `rm -f /dev/shm/fastrtps_*`, start again. |
+| Bringup hangs, or Nav2 never becomes active after a partial restart | Stale DDS files: `scripts/stop_robot.sh`, `rm -f /dev/shm/fastrtps_*`, start again. **Only delete those files with everything stopped** - deleting them under running nodes cuts those nodes off (the EKF stopped, 2026-11-12). |
+| Costmap warns `... points buffer updated in N s` | The depth cloud is not reaching Nav2: camera stopped, or the DDS profile not loaded (the launch files set `FASTRTPS_DEFAULT_PROFILES_FILE`; start through `scripts/bringup_nav.sh`). |
 | Camera missing, or `check_camera_usb.sh` says USB 2 | Re-plug the camera cable firmly (USB 3 port); run the check again. |
 | `rtabmap` dies at startup with `descriptors empty` / `doesn't match loaded words` | The map was not closed cleanly (battery pulled). `cp ~/.ros/rtabmap.db.lastclean ~/.ros/rtabmap.db`. |
 | Stop / kill commands seem to kill your own terminal | Never `pkill -f` a pattern that is also in your command line; use `scripts/stop_robot.sh`. |

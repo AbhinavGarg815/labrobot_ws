@@ -21,9 +21,12 @@
 # Starting these by hand in the wrong order produces failures that all look like
 # "the map is bad" rather than "a node started 3 seconds too early".
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription,
-                            TimerAction)
+                            SetEnvironmentVariable, TimerAction)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -40,6 +43,15 @@ def _include(name, condition=None, args=None):
         return IncludeLaunchDescription(src, condition=condition, **kwargs)
     return IncludeLaunchDescription(src, **kwargs)
 
+
+
+def _dds_profile():
+    """Fast DDS shared-memory segment big enough for clouds and raw images
+    (config/fastdds_shm.xml explains why). Every node launched after this
+    inherits it."""
+    return SetEnvironmentVariable(
+        'FASTRTPS_DEFAULT_PROFILES_FILE',
+        os.path.join(get_package_share_directory('labrobot_bringup'), 'config', 'fastdds_shm.xml'))
 
 def generate_launch_description():
     mapping = LaunchConfiguration('mapping')
@@ -92,7 +104,7 @@ def generate_launch_description():
                         'Costs nothing while no panel is open.'),
     ]
 
-    return LaunchDescription(args + [
+    return LaunchDescription([_dds_profile()] + args + [
         _include('camera.launch.py',
                  args={'pointcloud': pointcloud, 'decimation': decimation}.items()),
         _include('drivetrain.launch.py'),
