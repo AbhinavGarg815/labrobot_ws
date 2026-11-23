@@ -1,19 +1,4 @@
-"""Shared pre-motion gate: may the robot navigate on its current map pose?
-
-    import nav_gate
-    ok, why = nav_gate.ready_to_navigate(node, buf)
-
-Used by nav_goal.py and waypoints.py so every way of sending the robot
-somewhere applies the same rule:
-
-1. auto_localise must have confirmed the startup pose (latched
-   /labrobot/localised). Without it there is no evidence the pose was ever
-   right - after a restart RTAB-Map assumes the robot is where it shut down.
-2. The single-view gross-error check (localisation_check) must not say WRONG,
-   in case the robot was carried after auto_localise succeeded. This check is
-   weak when the view is dominated by objects that moved since mapping, so it
-   can refuse a correct pose; that fails safe - re-run auto_localise.
-"""
+"""Shared pre-motion gate: may the robot navigate on its current map pose?"""
 import time
 
 import rclpy

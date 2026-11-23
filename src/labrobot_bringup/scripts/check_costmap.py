@@ -3,43 +3,6 @@
 
     ros2 run labrobot_bringup check_costmap.py
     ros2 run labrobot_bringup check_costmap.py --span 2.5
-
-Why this exists
----------------
-When Nav2 refuses to move, the log says "collision ahead" or "failed to make
-progress" but not WHERE. Reading a costmap through `ros2 topic echo` is
-hopeless - it is a flat array of a few thousand bytes. Every navigation bug on
-this robot so far has been a costmap bug (stale marks frozen by a bad
-raytrace_min_range, the camera falling outside its own voxel grid, depth noise
-at 3 m painted as a wall), and each one was obvious the moment the grid was
-drawn as a picture and invisible before that.
-
-The footprint matters as much as the obstacles. The controller's collision
-check is the FOOTPRINT POLYGON against lethal cells, not the robot centre
-against inflation. A gap can look blocked in the inflation layer and still be
-perfectly drivable, so the picture has to show which cells the robot's own body
-would actually occupy.
-
-Reading the picture
--------------------
-  R  cells the robot footprint covers right now
-  #  lethal (254) - the controller will refuse to put the footprint here
-  +  inscribed (253) - centre may not go here, footprint edge may
-  :  inflation cost, decaying with distance; discourages, does not forbid
-  .  free
-  ?  unknown
-
-Read the RAW costmap, not the display one
------------------------------------------
-`/local_costmap/costmap` is an OccupancyGrid that Costmap2DPublisher has
-RESCALED to 0..100 for display: 254 becomes 100, 253 becomes 99, 1..252 are
-squeezed into 1..98 and 255 becomes -1. Thresholding that at 253/254 finds
-nothing, so a costmap packed with inscribed cells reads back as "0% lethal,
-footprint clear". `/local_costmap/costmap_raw` (nav2_msgs/Costmap) carries the
-true 0..255 values the controller actually tests against, so that is what this
-reads.
-
-x is up the page (robot forward), y is to the left, matching REP-103.
 """
 
 import argparse
@@ -68,8 +31,7 @@ def main():
     ap.add_argument('--span', type=float, default=1.6,
                     help='metres to show either side of the robot')
     ap.add_argument('--seconds', type=float, default=8.0)
-    # Half-extents of the footprint in nav2_params.yaml. Kept as arguments so
-    # this stays honest if the footprint is ever changed there.
+    # Half-extents of the footprint in nav2_params.yaml.
     ap.add_argument('--half-length', type=float, default=0.21)
     ap.add_argument('--half-width', type=float, default=0.203)
     args, _ = ap.parse_known_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
@@ -77,8 +39,7 @@ def main():
     rclpy.init()
     n = Node('check_costmap')
     grid = {'m': None}
-    # Costmaps are published TRANSIENT_LOCAL + RELIABLE. Subscribing with the
-    # default volatile QoS silently matches nothing and waits forever.
+    # Costmaps are published TRANSIENT_LOCAL + RELIABLE.
     qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
     n.create_subscription(Costmap, args.topic,
@@ -108,12 +69,8 @@ def main():
     res = md.resolution
     W, H = md.size_x, md.size_y
     ox, oy = md.origin.position.x, md.origin.position.y
-    # nav2_msgs/Costmap carries uint8 0..255 with no rescaling, so these compare
-    # directly against LETHAL/INSCRIBED as the controller does.
     data = np.asarray(m.data, dtype=np.uint16).reshape(H, W)
 
-    # Sample on a robot-centred grid so "up the page" is always robot-forward,
-    # independent of how the map frame happens to be oriented.
     step = res
     ticks = int(args.span / step)
     c, s = math.cos(ryaw), math.sin(ryaw)
@@ -172,8 +129,7 @@ def main():
                if fp_worst >= INSCRIBED else 'footprint clear')
     print(f'  footprint: {fp_cells} cells, worst cost {fp_worst}  -> {verdict}')
 
-    # Where is the nearest lethal cell, and in which direction? This is the
-    # number that decides whether a gap is threadable.
+    # Where is the nearest lethal cell, and in which direction?
     ly, lx = np.where(data >= LETHAL)
     if len(lx):
         wx = ox + (lx + 0.5) * res

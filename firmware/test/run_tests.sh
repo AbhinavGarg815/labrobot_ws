@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 # Compile and run the host-side firmware tests.
-#
-# These exercise the RMCS-2303 MODBUS ASCII framing and the per-wheel
-# sequencing natively, with a stub Arduino.h, so protocol and ordering bugs
-# surface here instead of as an unexpected motor movement on the bench.
 
 set -euo pipefail
 

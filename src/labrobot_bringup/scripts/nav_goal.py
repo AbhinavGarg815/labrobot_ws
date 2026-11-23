@@ -3,22 +3,6 @@
 
     ros2 run labrobot_bringup nav_goal.py --forward 1.0
     ros2 run labrobot_bringup nav_goal.py --forward 1.0 --left 0.5 --turn 90
-
-Why relative rather than absolute map coordinates
--------------------------------------------------
-The map frame's origin is wherever RTAB-Map happened to start, which is not a
-place a human can point at. "1 m forward from here" is checkable against the
-room; "go to (2.13, -0.87)" is not, and getting it wrong on a robot with a 0.79 m
-blind zone means driving somewhere nobody verified was clear.
-
-The goal is still SENT in the map frame - Nav2 plans there - but it is computed
-from the robot's current map pose, so what you type is what you can measure.
-
-Safety
-------
-Prints the resolved goal before sending, streams distance-remaining while
-driving, and always cancels the goal on Ctrl-C rather than leaving Nav2 to keep
-executing after the operator has walked away.
 """
 
 import argparse
@@ -88,11 +72,7 @@ def main():
         node.destroy_node(); rclpy.shutdown(); return 1
     x0, y0, yaw0 = here
 
-    # Refuse to navigate on a wrong pose. On 2026-10-07 a hand move left the
-    # pose 1.8 m out; RTAB-Map corrected it 13 s into the run, after this goal
-    # had been computed from the wrong pose, and the robot overshot by 2.5 m.
-    # The goal below is RELATIVE to the current pose, so a wrong pose means a
-    # wrong goal - this must be checked first, not discovered mid-run.
+    # Refuse to navigate on a wrong pose.
     if not args.skip_localisation_check:
         import nav_gate   # sibling script, installed alongside this one
         ok, why = nav_gate.ready_to_navigate(node, node.buf)

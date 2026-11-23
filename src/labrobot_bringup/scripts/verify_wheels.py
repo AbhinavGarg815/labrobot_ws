@@ -1,36 +1,7 @@
 #!/usr/bin/env python3
-"""Do the wheels actually do what they were told? Per-timestamp, both wheels.
+"""Do the wheels actually do what they were told?
 
     ros2 run labrobot_bringup verify_wheels.py --seconds 60
-
-Passive. Run it alongside a Nav2 goal, drive_test, or teleop.
-
-What it does
-------------
-Records the commanded twist and the measured wheel velocities, puts BOTH on one
-interpolated timebase, converts the twist into the wheel speeds diff_drive_
-controller would have asked for, and compares.
-
-The kinematics are read from the running controller, not hard-coded, so the
-comparison uses the same calibrated numbers the controller used:
-
-    ws    = wheel_separation * wheel_separation_multiplier
-    r_L   = wheel_radius * left_wheel_radius_multiplier
-    r_R   = wheel_radius * right_wheel_radius_multiplier
-    w_L   = (v - omega * ws / 2) / r_L      [rad/s]
-    w_R   = (v + omega * ws / 2) / r_R
-
-Why per-timestamp matters
--------------------------
-Comparing sample i of one stream against sample i of another folds timing skew
-into the answer and reports it as a tracking error. This project already produced
-one phantom "0.87% wheel asymmetry" that was really 35 ms of Modbus sampling
-skew, so both streams are interpolated onto a common time base first.
-
-Lag is measured separately by cross-correlation rather than being allowed to
-masquerade as error: a drivetrain that tracks perfectly but 100 ms late looks
-identical to one that tracks badly, until you separate them - and the fixes are
-completely different.
 """
 
 import argparse
@@ -109,21 +80,6 @@ def main():
 
     n.create_subscription(JointState, '/joint_states', on_js, qos)
 
-    # The gyro is an INDEPENDENT, low-latency (200 Hz, ~5 ms) witness of what the
-    # robot actually did. Comparing the command against the ENCODERS gives
-    # actuation lag PLUS measurement lag; comparing it against the GYRO gives
-    # actuation lag alone. The difference is how stale the encoder feedback is -
-    # and the two have opposite fixes, so a single combined number is not
-    # actionable.
-    #
-    # STORE ALL THREE AXES. /imu/unbiased is in camera_imu_optical_frame, NOT the
-    # robot frame, and this camera is pitched 10.78 deg with the optical
-    # convention (z forward, y down). Measured on this robot the robot's yaw rate
-    # is  +0.018*gx -0.982*gy -0.187*gz  - dominated by -gy, with gz contributing
-    # only -0.187. An earlier version of this script used gz alone and reported a
-    # gyro/command gain of -0.196, which is simply that coefficient: it was
-    # measuring 19% of the yaw rate, inverted, and the lag it derived from that
-    # was meaningless. The EKF gets this right because it transforms through TF.
     gyro = []
     n.create_subscription(Imu, '/imu/unbiased',
                           lambda m: gyro.append((time.time(),
@@ -160,8 +116,6 @@ def main():
 
     v = np.interp(t, C[:, 0], C[:, 1])
     w = np.interp(t, C[:, 0], C[:, 2])
-    # Zero-order hold is the honest interpolation for a command: it is held
-    # constant until the next one arrives, it does not ramp between them.
     idx = np.searchsorted(C[:, 0], t, side='right') - 1
     idx = np.clip(idx, 0, len(C) - 1)
     v = C[idx, 1]; w = C[idx, 2]
@@ -179,21 +133,9 @@ def main():
     if na < 20:
         print('  robot barely moved'); sys.stdout.flush(); os._exit(1)
 
-    # Lag, by cross-correlation on the mean wheel speed. Separated from error
-    # because a perfect-but-late drivetrain looks like a bad one otherwise.
+    # Lag, by cross-correlation on the mean wheel speed.
     def lag_of(exp, act):
-        """Cross-correlation lag in seconds, or None when it is not measurable.
-
-        CROSS-CORRELATION NEEDS A VARYING SIGNAL. During a steady manoeuvre - an
-        in-place rotation at constant rate, say - the command is essentially
-        constant, the correlation is flat, and argmax picks an arbitrary point on
-        that plateau. This produced -2500 ms and -23580 ms on one run: not large
-        lags, just noise being read as a peak by a function with no opinion about
-        whether a peak exists.
-
-        Guarded two ways: the signal must actually vary, and the peak must stand
-        out from the rest of the correlation.
-        """
+        """Cross-correlation lag in seconds, or None when it is not measurable."""
         e = exp - exp.mean(); a = act - act.mean()
         if np.allclose(e, 0) or np.allclose(a, 0):
             return None
@@ -202,8 +144,6 @@ def main():
             return None
         cc = np.correlate(a, e, 'full')
         k = int(np.argmax(cc))
-        # The peak must be meaningfully above the typical correlation value,
-        # otherwise the "peak" is just the top of a flat plateau.
         if cc.max() <= 0 or cc.max() < 1.15 * np.abs(cc).mean():
             return None
         return (k - (len(e) - 1)) / 50.0
@@ -227,15 +167,11 @@ def main():
           f'{"err mean":>10}{"scale":>9}')
     for nm, e, a in (('left', eLs[m], aLs[m]), ('right', eRs[m], aRs[m])):
         err = a - e
-        # Slope of actual against commanded: 1.00 means the wheel delivers
-        # exactly what it is asked for.
         scale = float(np.dot(a, e) / np.dot(e, e)) if np.dot(e, e) > 0 else float('nan')
         print(f'  {nm:<8}{np.sqrt((e**2).mean()):10.3f}{np.sqrt((a**2).mean()):10.3f}'
               f'{np.sqrt((err**2).mean()):10.3f}{err.mean():+10.3f}{scale:9.3f}')
     print('  (rad/s at the wheel)')
 
-    # Straight-line segments only: this is where L and R should be equal, so any
-    # difference here is a genuine drivetrain asymmetry rather than a commanded turn.
     straight = m & (np.abs(w[:len(m)] if len(w) >= len(m) else w) < 0.02) \
                  & (np.abs(v[:len(m)] if len(v) >= len(m) else v) > 0.01)
     if straight.sum() > 20:
@@ -252,11 +188,9 @@ def main():
     else:
         print('\n  no sustained straight segments in this run')
 
-    # --- separate actuation lag from measurement lag ------------------------
+    # separate actuation lag from measurement lag
     print()
     if len(gyro) > 50 and imu_frame['id']:
-        # Bottom row of the rotation base_footprint <- imu frame: the robot's
-        # yaw rate is that row dotted with the raw gyro vector.
         try:
             tr = tf_buf.lookup_transform('base_footprint', imu_frame['id'],
                                          rclpy.time.Time())
@@ -282,9 +216,7 @@ def main():
             lag_gyro = lag_of(w_cmd[turning], gz[turning])
             print(f'  LAG BREAKDOWN (from {int(turning.sum())} turning samples)')
             if lag_enc is None or lag_gyro is None:
-                # Cross-correlation needs a varying signal. A constant-rate spin
-                # has none, and forcing an answer out of it produced -23580 ms
-                # on one run.
+                # Cross-correlation needs a varying signal.
                 print('    NOT MEASURABLE - the commanded rotation was too steady.')
                 print('    Use a manoeuvre with a CHANGING rate (a Nav2 goal), not')
                 print('    a constant spin.')
@@ -308,8 +240,6 @@ def main():
                     print('    -> dominated by MEASUREMENT. The robot moves on time but')
                     print('       odometry reports it late, so the EKF pose lags and')
                     print('       Nav2 overshoots. Fix the feedback path.')
-            # Gyro scale sanity: if these disagree in MAGNITUDE as well as phase,
-            # one of the two is mis-scaled and the kinematics are suspect.
             m2 = turning
             gain = float(np.dot(gz[m2], w_cmd[m2]) / max(np.dot(w_cmd[m2], w_cmd[m2]), 1e-9))
             print(f'    gyro/command gain   : {gain:.3f}  '
@@ -320,10 +250,6 @@ def main():
         print('  no /imu/unbiased - cannot separate actuation from measurement lag')
 
     if args.csv:
-        # One row per interpolated sample: what each wheel was ASKED for and what
-        # it actually REPORTED, on the same timebase. This is the raw material
-        # behind every summary above - inspect it directly when a number looks
-        # wrong rather than trusting the aggregate.
         with open(args.csv, 'w') as f:
             f.write('t_rel,cmd_v,cmd_w,left_cmd,left_meas,left_err,'
                     'right_cmd,right_meas,right_err\n')

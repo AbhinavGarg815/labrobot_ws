@@ -52,8 +52,7 @@ hardware_interface::CallbackReturn RMCS2303SystemHardware::on_init(
     return hardware_interface::CallbackReturn::ERROR;
   }
 
-  // Validate the interface contract up front. Getting this wrong shows up as a
-  // silently motionless robot much later, so fail loudly here instead.
+  // Validate the interface contract up front.
   for (size_t i = 0; i < kNumJoints; ++i) {
     const auto & joint = info_.joints[i];
     joint_names_[i] = joint.name;
@@ -91,8 +90,6 @@ hardware_interface::CallbackReturn RMCS2303SystemHardware::on_init(
   const double max_wheel_rpm = param_or(info_, "max_wheel_rpm", 60.0);
   max_wheel_rad_s_ = max_wheel_rpm * kTwoPi / 60.0;
 
-  // Tolerate a few times the firmware's 20 ms status period before declaring
-  // the link dead, so ordinary USB scheduling jitter is not treated as a fault.
   status_timeout_s_ = param_or(info_, "status_timeout_ms", 500.0) / 1000.0;
   bootloader_wait_s_ = param_or(info_, "bootloader_wait_ms", 2500.0) / 1000.0;
 
@@ -109,17 +106,14 @@ hardware_interface::CallbackReturn RMCS2303SystemHardware::on_init(
 }
 
 hardware_interface::CallbackReturn RMCS2303SystemHardware::on_configure(
-  const rclcpp_lifecycle::State & /*previous_state*/)
+  const rclcpp_lifecycle::State & /* previous_state */)
 {
   std::string error;
   if (!port_.open(serial_device_, baud_rate_, error)) {
     RCLCPP_FATAL(logger(), "%s", error.c_str());
     return hardware_interface::CallbackReturn::ERROR;
   }
-  // Opening the port asserted DTR and reset the board. Give the bootloader
-  // time to hand over to the sketch before writing anything, then discard the
-  // bootloader's own chatter. Sleeping here is safe: on_configure is a
-  // lifecycle transition, not the real-time loop.
+  // Opening the port asserted DTR and reset the board.
   RCLCPP_INFO(
     logger(), "opened %s; waiting %.1f s for the MCU bootloader",
     serial_device_.c_str(), bootloader_wait_s_);
@@ -131,10 +125,8 @@ hardware_interface::CallbackReturn RMCS2303SystemHardware::on_configure(
 }
 
 hardware_interface::CallbackReturn RMCS2303SystemHardware::on_activate(
-  const rclcpp_lifecycle::State & /*previous_state*/)
+  const rclcpp_lifecycle::State & /* previous_state */)
 {
-  // Discard anything queued while inactive: acting on a stale velocity frame
-  // would move the robot the instant controllers start.
   port_.flush_input();
   parser_.reset();
 
@@ -159,10 +151,8 @@ hardware_interface::CallbackReturn RMCS2303SystemHardware::on_activate(
 }
 
 hardware_interface::CallbackReturn RMCS2303SystemHardware::on_deactivate(
-  const rclcpp_lifecycle::State & /*previous_state*/)
+  const rclcpp_lifecycle::State & /* previous_state */)
 {
-  // Stop explicitly rather than relying on the firmware watchdog: the watchdog
-  // is the backstop for a crash, not the normal path for an orderly shutdown.
   send_simple_command(labrobot::protocol::kCmdStop);
   RCLCPP_INFO(
     logger(), "deactivated after %u status frames (%u dropped)", status_frames_,
@@ -171,7 +161,7 @@ hardware_interface::CallbackReturn RMCS2303SystemHardware::on_deactivate(
 }
 
 hardware_interface::CallbackReturn RMCS2303SystemHardware::on_cleanup(
-  const rclcpp_lifecycle::State & /*previous_state*/)
+  const rclcpp_lifecycle::State & /* previous_state */)
 {
   send_simple_command(labrobot::protocol::kCmdStop);
   port_.close();
@@ -213,9 +203,7 @@ void RMCS2303SystemHardware::apply_status(const labrobot::protocol::Status & sta
 {
   ++status_frames_;
 
-  // Sequence gaps mean status frames were lost on the USB link. They are not
-  // fatal - position is absolute, so a gap costs latency, not distance - but a
-  // rising count points at a link problem worth investigating.
+  // Sequence gaps mean status frames were lost on the USB link.
   if (have_seq_) {
     const uint8_t expected = static_cast<uint8_t>(last_seq_ + 1);
     if (status.seq != expected) {
@@ -260,8 +248,6 @@ void RMCS2303SystemHardware::apply_status(const labrobot::protocol::Status & sta
 void RMCS2303SystemHardware::drain_serial()
 {
   uint8_t buffer[512];
-  // Bounded so a backlog cannot make read() run long; anything left over is
-  // picked up next cycle. At 50 Hz status this drains far faster than it fills.
   for (int pass = 0; pass < 8; ++pass) {
     const int n = port_.read(buffer, sizeof(buffer));
     if (n <= 0) {
@@ -287,16 +273,14 @@ void RMCS2303SystemHardware::drain_serial()
 }
 
 hardware_interface::return_type RMCS2303SystemHardware::read(
-  const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
+  const rclcpp::Time & time, const rclcpp::Duration & /* period */)
 {
   const uint32_t before = status_frames_;
   drain_serial();
 
   if (status_frames_ != before) {
     last_status_time_ = time;
-    // Periodic link health. Dropped frames cost latency, not distance (encoder
-    // position is absolute), but a steadily rising rate means the USB link is
-    // losing data and is worth chasing before it hides a real fault.
+    // Periodic link health.
     if ((time - last_health_report_).seconds() >= 10.0) {
       const uint32_t recent_frames = status_frames_ - reported_frames_;
       const uint32_t recent_dropped = dropped_frames_ - reported_dropped_;
@@ -316,9 +300,7 @@ hardware_interface::return_type RMCS2303SystemHardware::read(
   }
 
   if (!have_status_) {
-    // Still waiting for the firmware's first frame after activation. Report OK
-    // so controllers can start; write() holds the command at zero until the
-    // link is up.
+    // Still waiting for the firmware's first frame after activation.
     return hardware_interface::return_type::OK;
   }
 
@@ -334,10 +316,8 @@ hardware_interface::return_type RMCS2303SystemHardware::read(
 }
 
 hardware_interface::return_type RMCS2303SystemHardware::write(
-  const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
+  const rclcpp::Time & time, const rclcpp::Duration & /* period */)
 {
-  // Do not command motion before the firmware has been heard from: without a
-  // status frame we cannot tell a healthy drive from an absent one.
   const bool link_up = have_status_;
 
   int16_t mrad[kNumJoints] = {0, 0};
@@ -346,8 +326,6 @@ hardware_interface::return_type RMCS2303SystemHardware::write(
     if (!link_up || !std::isfinite(cmd)) {
       cmd = 0.0;
     }
-    // Saturate rather than let an over-range request wrap: the RMCS-2303
-    // datasheet warns that an unreachable speed gives an "uncertain result".
     cmd = std::clamp(cmd, -max_wheel_rad_s_, max_wheel_rad_s_);
     mrad[i] = static_cast<int16_t>(std::lround(cmd * 1000.0));
   }
@@ -360,12 +338,7 @@ hardware_interface::return_type RMCS2303SystemHardware::write(
     return hardware_interface::return_type::ERROR;
   }
   if (!port_.write(frame, n)) {
-    // Returning ERROR makes ros2_control deactivate this hardware for the rest
-    // of the run. On 2026-10-31 ONE failed write, while status frames were
-    // still arriving at 50 Hz, left the robot unable to move until a full
-    // restart. So skip this frame - the next cycle sends a fresh command, and
-    // the firmware watchdog brakes if commands really stop - and give up only
-    // when writes keep failing as long as read() tolerates a silent MCU.
+    // Returning ERROR makes ros2_control deactivate this hardware for the rest of the run.
     if (write_failures_ == 0) {
       first_write_failure_ = time;
     }

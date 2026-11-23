@@ -1,13 +1,5 @@
 # Sensor fusion: IMU orientation filter + EKF publishing odom -> base_footprint.
-#
 #   ros2 launch labrobot_bringup localization.launch.py
-#
-# Expects drivetrain.launch.py and camera.launch.py to be running already - this
-# consumes /diff_drive_controller/odom and /camera/camera/imu.
-#
-# IMPORTANT: the EKF owns the odom -> base_footprint transform, so
-# diff_drive_controller must run with enable_odom_tf: false. Two publishers on
-# one TF edge do not average out; consumers just see whichever arrived last.
 
 import os
 
@@ -49,9 +41,6 @@ def generate_launch_description():
         ],
     )
 
-    # Must run BEFORE the EKF sees any IMU data, and needs the robot stationary
-    # for its first few seconds. See the node's docstring for why neither
-    # robot_localization nor imu_filter_madgwick can do this job.
     imu_bias = Node(
         package='labrobot_bringup',
         executable='imu_bias_compensator.py',
@@ -65,8 +54,7 @@ def generate_launch_description():
         name='ekf_filter_node',
         output='screen',
         parameters=[ekf_config],
-        # The EKF's own output. Left un-remapped from the default /odometry/filtered
-        # so it is obvious in a topic list which odometry is raw and which is fused.
+        # Output stays /odometry/filtered (fused, vs raw wheel odometry).
     )
 
     return LaunchDescription([

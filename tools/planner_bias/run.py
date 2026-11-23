@@ -1,22 +1,7 @@
 #!/usr/bin/env python3
-"""Does the global planner centre the robot in a gap? Test it with no robot.
+"""Does the global planner centre the robot in a gap?
 
     python3 tools/planner_bias/run.py
-
-Draws synthetic maps (8 x 8 m, 5 cm cells) with one 0.4 m thick wall across
-the map and a single opening of known width and centre, starts the real Nav2
-planner on them (rig.launch.py: map_server + planner_server, the robot's own
-footprint/inflation/planner settings), and measures how far the route runs
-from the true centre of the opening.
-
-Each opening is crossed in both directions, and walls run along both map axes.
-That separates the two possible kinds of bias:
-  * tied to the ROBOT  (e.g. always to its right) -> flips sign in map terms
-    when the direction of travel reverses;
-  * tied to the MAP GRID (e.g. a half-cell shift towards -x/-y) -> same sign in
-    map terms whichever way the robot travels.
-All three narrow-gap runs on hardware ran 4-7 cm to the robot's right while
-heading roughly +x in the map, so either explanation fits; this decides.
 """
 import os, subprocess, sys, time, signal, math
 import numpy as np
@@ -31,8 +16,7 @@ OUT = os.environ.get('PB_OUT', '/tmp/planner_bias')
 RES, SIZE, ORIGIN = 0.05, 160, -4.0
 
 def make_map(name, wall_axis, lo, hi):
-    """wall_axis 'x': wall spans y (a band in x = -0.2..0.2), opening y in [lo,hi].
-       wall_axis 'y': wall spans x (band in y), opening x in [lo,hi]."""
+    """wall_axis 'x': wall spans y (a band in x = -0.2..0.2), opening y in [lo,hi]."""
     os.makedirs(OUT, exist_ok=True)
     g = np.full((SIZE, SIZE), 254, np.uint8)            # [row=y index, col=x index]
     c = ORIGIN + (np.arange(SIZE) + 0.5) * RES             # cell centres

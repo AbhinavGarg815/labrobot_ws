@@ -3,16 +3,6 @@
 
     python3 tools/gap_edges.py                 # scan 1.4-2.8 m ahead
     python3 tools/gap_edges.py --near 1.0 --far 2.0
-
-Stacks 10 aligned-depth frames (so one noisy frame cannot set an edge), keeps
-returns 0.10-0.90 m above the floor (the costmap's band), and for each 10 cm
-slice of distance reports the inner edge of the obstacle on each side of the
-robot's centreline, the gap width and its centre. Edges use the 2nd/98th
-percentile of the points on each side, not the min/max, so stray pixels at an
-object's silhouette do not eat into the gap.
-
-Prints the narrowest slice and the clearance per side for this 0.406 m robot,
-which is the number that decides whether the test is meaningful.
 """
 import argparse, time, numpy as np, rclpy, tf2_ros
 from rclpy.node import Node

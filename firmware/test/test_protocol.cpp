@@ -1,8 +1,4 @@
 // Host-side tests for the Jetson <-> Mega wire format.
-//
-// This protocol carries motor commands, so a decoding bug is a robot driving on
-// a value nobody sent. These tests therefore lean hard on the failure paths:
-// corruption, truncation, wrong lengths, and garbage between frames.
 
 #include "../labrobot_firmware/labrobot_protocol.h"
 
@@ -44,15 +40,12 @@ static int pump(FrameParser& p, const uint8_t* data, size_t len) {
 int main() {
   std::printf("Host protocol tests\n");
 
-  // --- CRC is a known-answer check, not self-consistency -------------------
-  // "123456789" under CRC-16/CCITT-FALSE is the standard check value 0x29B1.
-  // Without this the encoder and parser could agree on a wrong algorithm.
   {
     const uint8_t v[] = "123456789";
     expectEqI("CRC-16/CCITT-FALSE check value", crc16(v, 9), 0x29B1);
   }
 
-  // --- Velocity round trip, including negatives ----------------------------
+  // Velocity round trip, including negatives
   {
     uint8_t buf[kMaxFrame];
     VelocityCommand cmd{-6283, 6283};  // full reverse / full forward
@@ -71,7 +64,7 @@ int main() {
     expectEqI("right preserved", got.right_mrad_s, 6283);
   }
 
-  // --- Status round trip, including negative 32-bit counts -----------------
+  // Status round trip, including negative 32-bit counts
   {
     uint8_t buf[kMaxFrame];
     Status s{};
@@ -103,7 +96,7 @@ int main() {
     expectEqI("host errors", g.host_errors, 7);
   }
 
-  // --- Payload-less commands ------------------------------------------------
+  // Payload-less commands
   {
     for (uint8_t t : {kCmdStop, kCmdEstop, kCmdResetOdom, kCmdPing}) {
       uint8_t buf[kMaxFrame];
@@ -116,9 +109,6 @@ int main() {
     }
   }
 
-  // --- Every single-bit corruption must be caught --------------------------
-  // Exhaustive rather than a spot check: this is the guarantee the watchdog and
-  // the motor commands both rest on.
   {
     uint8_t good[kMaxFrame];
     VelocityCommand cmd{1234, -4321};
@@ -135,7 +125,6 @@ int main() {
         FrameParser p;
         if (pump(p, bad, n) == 1) {
           // Corrupting a sync byte just means no frame starts - that is fine.
-          // Anything that still yields a frame must not be a silent mutation.
           VelocityCommand got{};
           if (decodeVelocity(p.payload(), p.payloadLen(), &got) &&
               (got.left_mrad_s != cmd.left_mrad_s ||
@@ -151,8 +140,6 @@ int main() {
     expectTrue(name, missed == 0);
   }
 
-  // --- Wrong payload length for the type is rejected -----------------------
-  // A velocity message carrying 2 bytes must NOT be accepted as if short.
   {
     uint8_t buf[kMaxFrame];
     uint8_t payload[2] = {0x10, 0x20};
@@ -163,7 +150,7 @@ int main() {
                p.lastError() == FrameError::kWrongPayloadLen);
   }
 
-  // --- Unknown type is rejected even with a valid CRC ----------------------
+  // Unknown type is rejected even with a valid CRC
   {
     uint8_t buf[kMaxFrame];
     const size_t n = encodeFrame(0x7E, nullptr, 0, buf, sizeof(buf));
@@ -173,7 +160,7 @@ int main() {
                p.lastError() == FrameError::kUnknownType);
   }
 
-  // --- Oversized LEN is rejected without overrunning the buffer ------------
+  // Oversized LEN is rejected without overrunning the buffer
   {
     FrameParser p;
     const uint8_t junk[] = {kSync0, kSync1, 0xFF, kCmdVelocity, 0, 0, 0, 0};
@@ -182,9 +169,6 @@ int main() {
     expectTrue("flagged as bad length", p.lastError() == FrameError::kBadLength);
   }
 
-  // --- Garbage before a frame must not prevent parsing ---------------------
-  // Note the garbage deliberately contains a stray 0xA5, so a naive parser that
-  // latches on the first sync byte would derail.
   {
     uint8_t good[kMaxFrame];
     const size_t n = encodeVelocity({500, -500}, good, sizeof(good));
@@ -201,11 +185,6 @@ int main() {
     expectEqI("value intact after garbage", got.left_mrad_s, 500);
   }
 
-  // --- Truncation costs up to two frames, then recovers --------------------
-  // This documents the real guarantee. A truncated frame leaves the parser
-  // mid-payload, so it eats the next frame's header too. The frame after that
-  // must parse. Asserting the stronger "recovers immediately" would be
-  // asserting something the byte-level parser cannot deliver.
   {
     uint8_t good[kMaxFrame];
     const size_t n = encodeVelocity({500, -500}, good, sizeof(good));
@@ -223,9 +202,6 @@ int main() {
     expectEqI("value intact after recovery", got.left_mrad_s, 500);
   }
 
-  // --- reset() clears a truncated stump, so no frame is lost ---------------
-  // This is what the firmware does on an inter-byte gap; it turns the two-frame
-  // cost above into zero.
   {
     uint8_t good[kMaxFrame];
     const size_t n = encodeVelocity({777, -777}, good, sizeof(good));
@@ -239,7 +215,7 @@ int main() {
     expectEqI("value intact after reset", got.left_mrad_s, 777);
   }
 
-  // --- Back-to-back frames with no gap -------------------------------------
+  // Back-to-back frames with no gap
   {
     uint8_t buf[kMaxFrame * 3];
     size_t n = 0;
@@ -253,7 +229,7 @@ int main() {
     expectEqI("last frame's value", got.left_mrad_s, -300);
   }
 
-  // --- Buffer-capacity guard ------------------------------------------------
+  // Buffer-capacity guard
   {
     uint8_t tiny[4];
     expectEqI("encode refuses an undersized buffer",

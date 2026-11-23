@@ -1,17 +1,7 @@
 # ros2_control configuration for the REAL labrobot hardware.
-#
-# The Gazebo variant lives in controllers_gazebo.yaml; it differs only in
-# update_rate and use_sim_time, because the joint names, interfaces and
-# kinematics are identical on both targets.
 
 controller_manager:
   ros__parameters:
-    # The RMCS-2303 drives sit behind a MODBUS ASCII link fixed at 9600 baud,
-    # which caps the underlying encoder refresh at roughly 13-27 Hz. The Mega
-    # polls them continuously into a cache and the Jetson reads that cache over
-    # USB, so this loop can run faster than the Modbus link without stalling.
-    # 50 Hz gives diff_drive_controller a smooth odometry stream while leaving
-    # plenty of headroom on the USB round trip.
     update_rate: 50  # Hz
     use_sim_time: false
 
@@ -26,66 +16,13 @@ diff_drive_controller:
     left_wheel_names: ["left_wheel_joint"]
     right_wheel_names: ["right_wheel_joint"]
 
-    # Contact-patch to contact-patch, derived from the measured 300 mm
-    # outer-face spacing minus the 26 mm tyre width. The previous 0.2445 was
-    # the wheel *joint* spacing and under-rotated the robot by ~10.8%.
     wheel_separation: 0.274
     wheel_radius: 0.050
 
     # Calibration handles, measured on the floor 2026-07-30.
-    #
-    # Spin test: commanded 360 deg, odometry reported 360.43 deg, the robot
-    # physically turned ~370 deg. Turning further than reported means the
-    # configured separation is too wide, so scale it down by 360.43/370:
-    #   effective separation = 0.274 * 0.9741 = 0.2669 m
-    # That is 7 mm narrower than the 300 mm outer-face minus 26 mm tyre estimate
-    # - about what you would expect once tyre compliance moves the real contact
-    # patch inboard of the tyre's geometric centre.
-    #
-    # Cross-check: the straight-line and spin tests over-constrain the geometry.
-    # A 1.20 m real straight would have implied a 341 mm outer-face span, wider
-    # than the tape-measured 300 mm and therefore impossible; ~1.02 m implies
-    # 294 mm, which fits. That is what confirms the radius is right.
     wheel_separation_multiplier: 0.9741
 
-    # Per-wheel radius, from a 2 m straight run measured against a wall
-    # (2026-07-30). Two things came out of it.
-    #
-    # SCALE. Odometry under-reads distance:
-    #   1 m run: real 1.025 vs odom 1.0208 -> 1.00411 (+/-0.39%, tape-limited)
-    #   2 m run: real 2.010 vs odom 2.0034 -> 1.00329 (+/-0.20%)
-    #   inverse-variance weighted mean     -> 1.00346
-    # One 1 m run could not be told from tape noise, which is why it was left
-    # uncorrected before. Two runs agreeing at +0.3-0.4% is what makes it real.
-    #
-    # ASYMMETRY. The robot ended 20 mm right and 1.36 deg clockwise, while
-    # odometry claimed +0.25 deg - so odometry was blind to 1.61 deg of real
-    # turn. That gap is the classic UMBmark "type B" error:
-    #   (r_right - r_left)/r_mean = dtheta * wheel_separation / distance
-    #                             = -0.374%   (left wheel effectively larger)
-    # Sanity check: a constant-curvature arc ending at 1.36 deg over 2.01 m
-    # predicts 24 mm of lateral offset and 20 mm was measured, so the robot
-    # curved smoothly rather than being knocked sideways by a castor.
-    #
-    # REFINED after a verification run. Applying the full -0.374% made the robot
-    # drive physically straight (heading error 1.36 deg -> 0.00 deg) but pushed
-    # odometry's own error past zero, from +1.61 deg to -0.65 deg over 2 m.
-    #
-    # Odometry error is linear in the applied asymmetry, so two runs pin the
-    # zero crossing exactly:
-    #     0.000% applied -> odometry error +1.61 deg
-    #     0.374% applied -> odometry error -0.65 deg
-    #     zero at           0.266%
-    #
-    # Note both cannot be perfect at once here: with ideal velocity tracking,
-    # driving straight and reporting straight are the same condition. That they
-    # disagree by ~0.4 deg means we are at the noise floor of a tape measurement
-    # (+/-0.27 deg on the heading), so this is the last useful iteration.
-    #
-    # Tuned for odometry accuracy rather than physical straightness. The cost is
-    # ~0.39 deg of real curve over 2 m, and that is the right trade: Nav2 closes
-    # the loop on position, so a small real curve is steered out, whereas an
-    # odometry BIAS accumulates straight into the map where nothing corrects it.
+    # Per-wheel radius, from a 2 m straight run measured against a wall (2026-07-30).
     left_wheel_radius_multiplier: 1.00480
     right_wheel_radius_multiplier: 1.00212
 
@@ -93,40 +30,21 @@ diff_drive_controller:
     odom_frame_id: odom
     base_frame_id: base_footprint
 
-    # We have real encoders, so integrate measured wheel positions rather than
-    # assuming the commanded velocity was achieved.
     open_loop: false
     position_feedback: true
 
-    # FALSE because robot_localization now owns odom -> base_footprint
-    # (M2.T3, config/ekf.yaml in labrobot_bringup). Two publishers on one TF
-    # edge do not average out - consumers see whichever message arrived last,
-    # which shows up as position jitter that is very hard to attribute.
-    #
-    # The controller still PUBLISHES /diff_drive_controller/odom; the EKF
-    # consumes it. Only the transform moved.
-    #
-    # If you ever run the drivetrain WITHOUT the EKF, set this back to true or
-    # there will be no odom -> base_footprint at all and nothing will localise.
     enable_odom_tf: false
 
     use_stamped_vel: false
     cmd_vel_timeout: 0.5
 
-    # Smooths the velocity estimate derived from encoder position deltas. The
-    # Modbus link samples slower than this loop, so a short window keeps the
-    # reported velocity from stepping every time a fresh sample lands.
+    # Smooths the velocity estimate derived from encoder position deltas.
     velocity_rolling_window_size: 10
 
-    # Diagonal only: x, y, z, roll, pitch, yaw. Planar robot, so the
-    # out-of-plane terms are effectively infinite and the EKF ignores them.
+    # Diagonal only: x, y, z, roll, pitch, yaw.
     pose_covariance_diagonal:  [0.001, 0.001, 1000000.0, 1000000.0, 1000000.0, 0.03]
     twist_covariance_diagonal: [0.001, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 0.03]
 
-    # Hard mechanical ceiling is 60 rpm at the wheel = 0.314 m/s and 2.29 rad/s
-    # spinning in place. These sit safely inside that so the drives are never
-    # asked for a speed they cannot reach (the datasheet warns that commanding
-    # an unreachable speed gives "uncertain result").
     linear.x.has_velocity_limits: true
     linear.x.has_acceleration_limits: true
     linear.x.max_velocity: 0.26

@@ -2,10 +2,6 @@
 """Show candidate robot poses in Foxglove so a person can say which is real.
 
     python3 tools/show_pose_candidates.py A:-0.52,0.34,85 B:-0.30,0.24,92 [--minutes 15]
-
-Publishes latched visualization_msgs/MarkerArray on /labrobot/pose_candidates:
-an arrow (robot centre -> heading) and a label per candidate, in the map frame.
-A in red, B in green, C in blue. Never moves the robot.
 """
 import argparse
 import math

@@ -1,7 +1,5 @@
 <?xml version="1.0"?>
-<!-- The plugin name here must match the <plugin> element in
-     labrobot.ros2_control.xacro exactly, or controller_manager fails to load
-     the hardware with an unhelpful "class not available" message. -->
+
 <library path="labrobot_hardware">
   <class name="labrobot_hardware/RMCS2303SystemHardware"
          type="labrobot_hardware::RMCS2303SystemHardware"

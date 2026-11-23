@@ -1,11 +1,7 @@
 # Person following: perception (GPU) + follower (Nav2 goals).
-#
 #   ros2 launch labrobot_follow follow.launch.py                      # follows (robot MOVES on "start")
 #   ros2 launch labrobot_follow follow.launch.py dry_run:=true        # goals + plans only
 #   ros2 launch labrobot_follow follow.launch.py tracker_only:=true   # perception only
-#
-# Needs the stack up (scripts/bringup_nav.sh). Normally started through
-# scripts/follow.sh, which checks that first and logs to docs/logs/.
 
 import os
 
@@ -19,11 +15,7 @@ from launch_ros.actions import Node
 ENGINES = os.path.expanduser('~/labrobot_models/engines')
 
 
-
 def _dds_profile():
-    """Fast DDS shared-memory segment big enough for clouds and raw images
-    (config/fastdds_shm.xml explains why). Every node launched after this
-    inherits it."""
     return SetEnvironmentVariable(
         'FASTRTPS_DEFAULT_PROFILES_FILE',
         os.path.join(get_package_share_directory('labrobot_bringup'), 'config', 'fastdds_shm.xml'))

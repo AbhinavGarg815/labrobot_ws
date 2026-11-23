@@ -1,32 +1,4 @@
-"""Who is the target? Online appearance memory on top of a fixed re-ID embedding.
-
-A pretrained re-ID network (OSNet, trained on surveillance datasets) gives
-an appearance vector per person crop. On its own it is brittle on a robot:
-the view changes with range (this camera sees legs at 1.2 m, a whole body
-at 4 m), lighting changes across the lab, and the people around are a
-handful of specific individuals, not a benchmark gallery. Robot
-person-following work therefore learns the target ONLINE (Koide & Miura,
-RAS 2020; Ye et al., "OCL-RPF", RA-L 2024, with short- and long-term
-memories). Back-propagating online does not fit next to the nav stack, so
-this keeps the memory part:
-
-* short-term memory: the last few clean views of the target (recent look);
-* long-term memory: a bounded set of DIVERSE views (a new view is stored
-  only if it is unlike every stored one; when full, the most redundant is
-  dropped), so a view from 4 m is not forgotten while following at 1.2 m;
-* distractor memory: clean views of everyone else, so a match must beat the
-  best impostor by a margin, not just a fixed threshold.
-
-Rules that keep a wrong person from becoming the target:
-* memories are only written from CLEAN views (no other person's box
-  overlapping), and only while the target's own score is consistent;
-* re-acquisition needs score >= reid_thresh, a margin over the distractors,
-  N consecutive frames, and a 3D plausibility gate (the caller passes the
-  position check);
-* while following, a run of low scores while another track matches better
-  is treated as an identity switch (tracker swapped ids in a crossing): the
-  target is dropped to LOST rather than followed.
-"""
+"""Who is the target?"""
 
 from collections import deque
 
@@ -34,14 +6,6 @@ import numpy as np
 
 
 class TargetIdentity:
-    # Thresholds from the people1 recording (M6.T2; OSNet-AIN x1_0, cosine of
-    # unit embeddings): the target's own scores p5 0.843, min 0.604; a
-    # distractor (seated, 2.4 m) max 0.613, median 0.518. Re-identifications
-    # happened at 0.78-0.95.
-    #   reid_thresh 0.72  - 0.11 above the distractor's maximum
-    #   add_thresh 0.70   - learn only confident views (1% of the target's)
-    #   switch_thresh 0.55 - target never below it; distractor mostly is
-    # One recording, one distractor: re-check with similarly dressed people.
     def __init__(self, short_len=20, short_period_s=0.3, long_len=40,
                  long_period_s=1.0, long_novelty=0.85, distractor_len=200,
                  distractor_period_s=0.5, reid_thresh=0.72, reid_margin=0.05,
@@ -64,7 +28,6 @@ class TargetIdentity:
         self.top_k = top_k
         self.reset()
 
-    # ------------------------------------------------------------------
     def reset(self):
         self.short.clear()
         self.long = []
@@ -98,7 +61,6 @@ class TargetIdentity:
             return 0.0
         return float(np.max(np.stack(self.distractors) @ feat))
 
-    # ------------------------------------------------------------------
     def lock(self, track_id):
         """Operator selected this track; start a fresh model."""
         self.reset()
@@ -128,23 +90,8 @@ class TargetIdentity:
             self.distractors.append(feat.copy())
             self._last_distractor_t[track_id] = t
 
-    # ------------------------------------------------------------------
     def step(self, tracks, t, plausible=None, alive_ids=None):
-        """Update with this frame's TRACKED tracks.
-
-        tracks: objects with .id, .det (dict with 'feat', 'clean'), .confirmed.
-        plausible: callable(track) -> bool, the 3D gate for re-acquisition.
-        alive_ids: ids the tracker still holds (tracked or coasting); if the
-          target's id is no longer among them, the target is released and
-          searched for by appearance.
-        Returns (event, track_id): event in
-          'tracking'    target track present and consistent;
-          'occluded'    target track present but its view is not usable;
-          'switch'      identity switch suspected: target dropped;
-          'reacquired'  target found again on track_id;
-          'searching'   no target track; nobody matches yet;
-          'missing'     target track not in this frame (tracker coasting).
-        """
+        """Update with this frame's TRACKED tracks."""
         by_id = {tr.id: tr for tr in tracks}
         if self.target_id is not None and alive_ids is not None and \
                 self.target_id not in alive_ids and self.target_id not in by_id:
@@ -180,18 +127,11 @@ class TargetIdentity:
         if s < self.switch_thresh:
             self._low_run += 1
             if self._low_run >= self.switch_frames:
-                # Is someone else now a better match? Then the tracker swapped.
+                # Is someone else now a better match?
                 best_other = max((self.score(o.det['feat']) or -1.0
                                   for o in by_id.values()
                                   if o.id != tgt.id and o.det.get('feat') is not None),
                                  default=-1.0)
-                # A tracker can only swap the target onto ANOTHER PERSON, so a
-                # switch needs a competitor that now looks more like the
-                # target. A low score with nobody better in view is a new
-                # view of the same person (close range, turned round): keep
-                # tracking, just do not learn it. (2026-11-12: alone at
-                # 0.7 m after a memory seeded at 3-5 m from behind, the
-                # earlier rule 's < 0.40 -> switch' dropped the target.)
                 if best_other > s + 0.10 and best_other >= self.switch_thresh:
                     self._low_run = 0
                     return 'switch'
@@ -229,7 +169,5 @@ class TargetIdentity:
         return 'searching', None
 
     def release(self):
-        """Target lost for good / operator release; keep the model so the
-        same person can still be re-acquired until reset()."""
         self.target_id = None
         self._votes = {}

@@ -13,9 +13,7 @@ namespace labrobot_hardware
 namespace
 {
 
-// Only the rates we actually use. 500000 is exact on a 16 MHz ATmega2560
-// (U2X, UBRR=3, 0% error); 460800 and 921600 carry several percent of error
-// there and corrupt frames, so they are deliberately absent.
+// Only the rates we actually use.
 speed_t to_speed(uint32_t baud)
 {
   static const std::map<uint32_t, speed_t> kRates = {
@@ -54,7 +52,6 @@ bool SerialPort::open(const std::string & device, uint32_t baud, std::string & e
   }
 
   // Raw mode: no canonical processing, echo, flow control or character mapping.
-  // Anything less and the driver would eat or translate bytes of our frames.
   cfmakeraw(&tty);
   tty.c_cflag |= CLOCAL | CREAD;   // ignore modem lines, enable receiver
   tty.c_cflag &= ~CRTSCTS;         // no hardware flow control
@@ -110,9 +107,7 @@ bool SerialPort::write(const uint8_t * data, size_t len)
   while (written < len) {
     const ssize_t n = ::write(fd_, data + written, len - written);
     if (n < 0) {
-      // Never retry here: spinning would stall the whole controller loop. The
-      // caller decides whether a failure is transient (see write() in
-      // rmcs2303_system.cpp).
+      // Never retry here: spinning would stall the whole controller loop.
       last_errno_ = errno;
       return false;
     }

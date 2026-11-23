@@ -1,48 +1,13 @@
 #!/usr/bin/env python3
-"""Follow the target person with Nav2. States: IDLE, ACQUIRE, FOLLOW, LOST, SEARCH, WAIT.
+"""Follow the target person with Nav2.
 
     ros2 run labrobot_follow person_follower.py                  # drives (via Nav2)
     ros2 run labrobot_follow person_follower.py --ros-args -p dry_run:=true
-
-Commands on /labrobot/follow_cmd (std_msgs/String) - Foxglove Publish panel:
-    start    lock the nearest person ahead (person_tracker) and follow them
-    stop     stop following now (the target is remembered; `start` resumes)
-    release  forget the target (person_tracker)
-    select N lock person N (ids in the debug image); then `start`
-Status, latched, on /labrobot/follow_status (std_msgs/String).
-
-How it drives
-  * FOLLOW: a NavigateToPose goal with behavior_tree = follow_person.xml;
-    the goal is the STAND-OFF point (standoff_m short of the person on the
-    robot->person line, facing them), moved by /goal_update as they walk.
-    Inside standoff_m the goal is the robot's own position facing the
-    person (turn only, never reverse). Inside min_distance_m the Nav2 goal
-    is cancelled and the robot holds.
-  * Speed adapts to the person (user decision 2026-11-11): Nav2 speed limit
-    = person speed + speed_gain * (distance - standoff), clamped to
-    [min_speed, max_speed]. max_speed is the test cap (0.06 by default);
-    the velocity smoother's own cap still applies on top.
-  * LOST (target not seen for lost_after_s): hold lost_hold_s, then drive to
-    where they were last seen, then SEARCH: a full 360 deg turn starting
-    towards the side they were last seen (user decision), then WAIT
-    watching for search_wait_s, then IDLE ("lost"). Re-acquisition is the
-    tracker's re-ID decision only; the follower just sees the target again.
-  * Everything goes through Nav2 (planner, controller, velocity smoother,
-    collision monitor). Stop paths: `stop`, Ctrl-C here (cancels the goal),
-    scripts/stop_robot.sh; the Arduino watchdog brakes if commands stop.
-
-dry_run: computes and publishes goals (/labrobot/follow_goal) and asks the
-PLANNER for a path to each (/labrobot/follow_plan) - the robot never moves:
-no NavigateToPose, no Spin, no speed limit.
 """
 
 import os
 
-# One OpenBLAS thread, set BEFORE numpy loads. With the default pool (one per
-# core) every tiny 3x3 matrix product woke the pool and its threads then
-# spin-waited: the tracker used 121% of a core with nobody in view; with one
-# thread, 28% (measured 2026-11-11, M6.T1). Nothing here is big enough to
-# gain from BLAS threads.
+# One OpenBLAS thread, set BEFORE numpy loads.
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 os.environ.setdefault('OMP_NUM_THREADS', '1')
 
@@ -115,9 +80,6 @@ class PersonFollower(Node):
         if not os.path.exists(self.behavior_tree):
             raise FileNotFoundError(self.behavior_tree)
 
-        # Robot pose from the EKF's odometry (the same estimate as the
-        # odom -> base_footprint TF, ekf.yaml publish_tf) - a Python TF
-        # listener costs ~19% of a core on this robot (odom_pose.py).
         self.odom_pose = None         # (monotonic receive time, xy, yaw)
         self.create_subscription(Odometry, '/odometry/filtered', self.on_odom, 10)
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -166,7 +128,7 @@ class PersonFollower(Node):
         self.set_status('IDLE: send "start" on /labrobot/follow_cmd' +
                         (' (DRY RUN - the robot will not move)' if self.dry_run else ''))
 
-    # ---------------------------------------------------------------- inputs
+    # inputs
     def on_cmd(self, msg):
         cmd = msg.data.strip().lower()
         if cmd == 'start':
@@ -178,8 +140,6 @@ class PersonFollower(Node):
         elif cmd == 'stop':
             self.halt('stopped by operator')
         elif cmd in ('release', 'reset') and self.state != IDLE:
-            # (when IDLE there is nothing to stop - and the follower itself
-            # publishes `release` after a failed ACQUIRE)
             self.halt('target released by operator')
 
     def on_target(self, msg):
@@ -198,7 +158,7 @@ class PersonFollower(Node):
         self.costmap = Costmap(msg)
         self.costmap_t = time.monotonic()
 
-    # ---------------------------------------------------------------- helpers
+    # helpers
     def enter(self, state):
         self.state = state
         self.state_t = time.monotonic()
@@ -227,10 +187,7 @@ class PersonFollower(Node):
     def target_seen(self):
         fresh = time.monotonic() - self.tstate_t < 0.5
         st = self.tstate
-        # Seen = the target still has a track and was MEASURED within
-        # lost_after_s. Not the per-frame state: one missed frame makes it
-        # 'coasting', and that flickered LOST for 0.2-0.4 s with the person
-        # in plain view (live dry run 2026-11-12) - each would stop the robot.
+        # Seen = the target still has a track and was MEASURED within lost_after_s.
         return (fresh and st.get('track_id') is not None
                 and st.get('seen_age_s', 99) < self.lost_after_s and self.target is not None)
 
@@ -254,7 +211,6 @@ class PersonFollower(Node):
             self.pub_speed.publish(SpeedLimit(percentage=False, speed_limit=NO_SPEED_LIMIT))
         self.last_speed = None
 
-    # ---------------------------------------------------------------- nav
     def nav_active(self):
         return self.nav_pending or self.nav_handle is not None
 
@@ -392,14 +348,12 @@ class PersonFollower(Node):
         self.enter(IDLE)
         self.set_status(f'IDLE: {reason}', force=True)
 
-    # ---------------------------------------------------------------- tick
+    # tick
     def tick(self):
         if self.state == IDLE:
             return
         rp = self.robot_pose()
         if rp is None:
-            # a short gap (DDS discovery, a loaded CPU) is not a reason to give
-            # up; a missing transform for tf_grace_s is
             if time.monotonic() - self.tf_ok_t > self.tf_grace_s:
                 self.halt(f'no robot pose (/odometry/filtered) for {self.tf_grace_s:.0f} s')
             elif self.state == FOLLOW:
@@ -411,11 +365,6 @@ class PersonFollower(Node):
         seen = self.target_seen()
 
         if self.state == ACQUIRE:
-            # Follow only someone who stood still in front for acquire_still_s:
-            # the appearance memory starts from these views. On 2026-11-12 a
-            # person walking away at 1 m/s was locked; the memory held only
-            # back views at 3-5 m and they were not followed when they came
-            # back facing the robot.
             st = self.tstate
             locked = st.get('track_id') is not None and seen
             still = locked and st.get('speed', 9.0) <= self.acquire_max_speed
@@ -512,12 +461,6 @@ class PersonFollower(Node):
                 pxy = self.last_seen[0]
                 d = float(np.linalg.norm(pxy - robot_xy))
                 if d < self.standoff_m:
-                    # Lost while CLOSE: the person is almost certainly still
-                    # right there, too close for the camera (at 0.6 m it sees
-                    # only knees to hips). Searching would spin with them in
-                    # front of the robot (first driving test, 2026-11-12).
-                    # Wait in place instead; re-ID picks them up when they
-                    # step back.
                     self.cancel_nav()
                     self.enter(WAIT)
                     self.wait_reason = (f'lost you at {d:.1f} m - too close to see; '
@@ -571,10 +514,6 @@ def _interrupt(signum, frame):
 
 
 def main():
-    # Own the signals: rclpy's default handler shuts the context down on
-    # SIGINT/SIGTERM BEFORE this code runs, and then the Nav2 goal cannot be
-    # cancelled - the robot would carry on to the last stand-off point.
-    # (scripts/stop_robot.sh sends SIGTERM; Ctrl-C is SIGINT.)
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     signal.signal(signal.SIGINT, _interrupt)
     signal.signal(signal.SIGTERM, _interrupt)

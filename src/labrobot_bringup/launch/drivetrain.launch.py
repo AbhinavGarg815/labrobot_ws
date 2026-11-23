@@ -1,16 +1,6 @@
 # Bring up the labrobot drivetrain on real hardware.
-#
-# Starts robot_state_publisher, the ros2_control node talking to the Arduino
-# Mega, and the two controllers in order.
-#
 #   ros2 launch labrobot_bringup drivetrain.launch.py
-#
-# Drive it with:
 #   ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args \
-#       -r /cmd_vel:=/diff_drive_controller/cmd_vel_unstamped
-#
-# SAFETY: this robot has no kill switch. The firmware brakes if commands stop
-# arriving, but that cannot cover an MCU hang.
 
 import os
 
@@ -47,8 +37,7 @@ def generate_launch_description():
         description='Open RViz. Leave false when running headless over SSH.',
     )
 
-    # Expanded at launch so mcu_port reaches the hardware plugin. value_type=str
-    # is required or the URDF is mis-inferred as another parameter type.
+    # Expanded at launch so mcu_port reaches the hardware plugin.
     robot_description = ParameterValue(
         Command(['xacro ', xacro_file, ' mcu_port:=', mcu_port]),
         value_type=str,
@@ -61,9 +50,6 @@ def generate_launch_description():
         parameters=[{'robot_description': robot_description, 'use_sim_time': False}],
     )
 
-    # On hardware the controller_manager is its own process, unlike Gazebo where
-    # the plugin hosts it. It gets the description directly so the hardware
-    # plugin can read its <param> block.
     control_node = Node(
         package='controller_manager',
         executable='ros2_control_node',
@@ -93,8 +79,6 @@ def generate_launch_description():
         output='screen',
     )
 
-    # Order matters: joint_state_broadcaster first so /joint_states exists
-    # before anything consumes it, then the drive controller.
     load_diff_drive_after_broadcaster = RegisterEventHandler(
         event_handler=OnProcessExit(
             target_action=joint_state_broadcaster_spawner,

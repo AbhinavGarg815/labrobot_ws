@@ -1,30 +1,5 @@
 # RTAB-Map RGB-D SLAM (M3.T2).
-#
 #   ros2 launch labrobot_bringup mapping.launch.py
-#
-# Needs camera.launch.py, drivetrain.launch.py and localization.launch.py first.
-#
-# The one decision that shapes this file
-# --------------------------------------
-# RTAB-Map does NOT compute its own odometry here. It is given the EKF's, because
-# M3.T1 measured both over the same 360 deg spin:
-#
-#                     rotation      translation (truth: zero)
-#   EKF (wheels+gyro) 360.52 deg    0.2 mm
-#   visual odometry   360.04 deg    70.8 mm
-#
-# They agree on rotation to 0.13%, but visual odometry drifts 70 mm of phantom
-# translation per revolution - during pure rotation the baseline is tiny, so
-# per-frame errors integrate freely. The wheels are two orders of magnitude
-# better at translation and cannot slip sideways, and the gyro cannot slip at
-# all. So the camera is used for what only it can do: recognising a place it has
-# been before, and correcting the accumulated drift through loop closure.
-#
-# TF ownership, which must stay unambiguous:
-#   map   -> odom            RTAB-Map   (loop-closure correction)
-#   odom  -> base_footprint  the EKF    (see ekf.yaml)
-# Neither touches the other's edge. Two publishers on one edge do not average,
-# they alternate, and the tree jitters between whichever wrote last.
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -72,9 +47,7 @@ def generate_launch_description():
         description='Where the map lives. Save/load is just this file.',
     )
 
-    # Every RTAB-Map config parameter is declared as a STRING. Passing a launch
-    # argument that looks numeric makes launch infer an int, and the node dies at
-    # startup with InvalidParameterTypeException and exit code -6.
+    # Every RTAB-Map config parameter is declared as a STRING.
     def s(v):
         return ParameterValue(v, value_type=str)
 
@@ -98,80 +71,38 @@ def generate_launch_description():
         # Publishes map -> odom only; the EKF keeps odom -> base_footprint.
         'publish_tf': True,
 
-        # --- planar robot -------------------------------------------------
-        # The robot cannot leave the floor plane, so telling the optimiser
-        # that removes three degrees of freedom that only noise could move
-        # and stops the map slowly tilting out of the ground plane.
         'Reg/Force3DoF': s('true'),
         'Optimizer/Slam2D': s('true'),
 
-        # --- 2D occupancy grid for Nav2 ------------------------------------
+        # 2D occupancy grid for Nav2
         'Grid/FromDepth': s('true'),
         'Grid/3D': ParameterValue(grid_3d, value_type=str),
         'Grid/CellSize': s('0.05'),
-        # Ray tracing marks the space BETWEEN the camera and an obstacle as
-        # free. Without it the map only ever gains occupied cells and never
-        # clears anything that moved away.
+        # Ray tracing marks the space BETWEEN the camera and an obstacle as free.
         'Grid/RayTracing': s('true'),
         'Grid/MaxGroundHeight': s('0.05'),
-        # Above the robot's own height nothing can block it, and including
-        # ceilings and shelf undersides would wall the map in.
         'Grid/MaxObstacleHeight': s('0.90'),
         'Grid/RangeMin': s('0.30'),
-        # Depth noise grows with range squared; beyond 4 m this camera's
-        # points are too coarse to be worth writing into a 5 cm grid.
         'Grid/RangeMax': s('4.0'),
         'Grid/NoiseFilteringRadius': s('0.05'),
         'Grid/NoiseFilteringMinNeighbors': s('2'),
 
-        # --- loop closure ---------------------------------------------------
-        # 1 Hz is RTAB-Map's own default and is right: map updates are not a
-        # control loop, and this is the single largest CPU knob in the node.
         'Rtabmap/DetectionRate': s('1'),
         'RGBD/ProximityBySpace': s('true'),
         'RGBD/AngularUpdate': s('0.05'),
         'RGBD/LinearUpdate': s('0.05'),
-        # Reject a loop closure whose implied correction is absurd. With good
-        # odometry a genuine closure needs only a small correction, so a huge
-        # one means the place was misrecognised - and one accepted false
-        # closure folds the map in half irrecoverably.
+        # Reject a loop closure whose implied correction is absurd.
         'RGBD/OptimizeMaxError': s('3.0'),
         'Vis/MinInliers': s('20'),
-        # Re-extract fresh features from the stored images for loop-closure
-        # geometry, instead of pairing features by their quantised vocabulary
-        # word IDs ("Raw features are not saved in database"). Across days -
-        # different light, furniture moved - word-ID pairing is close to random:
-        # 23 of 30 relocalisation candidates came back with exactly 0/20 inliers.
-        # Re-extracted, the best near-misses rose from 12/20 to 18/20 (2026-10-13).
         'RGBD/LoopClosureReextractFeatures': s('true'),
-        # 1000 visual words stored per node, not the default 500. Fixed when a
-        # node is created, so it only takes effect for maps built after this
-        # change (the 2026-10-27 map onwards). Relocalisation after the room
-        # changes has been the weakest link: more words per place gives more
-        # chances to recognise it. Costs a larger database and a little CPU.
+        # 1000 visual words stored per node, not the default 500.
         'Kp/MaxFeatures': s('1000'),
-        # SURVIVE POWER CUTS. RTAB-Map's defaults are JournalMode 3 (MEMORY)
-        # and Synchronous 0 (OFF): the rollback journal lives in RAM and nothing
-        # is forced to disk. SQLite's own documentation says that combination
-        # will very likely corrupt the database if power is lost mid-
-        # transaction - and this robot runs on a battery that dies without
-        # warning. It happened: on 2026-10-27 a lifelong-mapping session lost
-        # power and the database read back "disk image is malformed" (the clean
-        # backup was restored). TRUNCATE keeps the journal ON DISK so an
-        # interrupted transaction is rolled back on next open; FULL makes every
-        # commit reach the disk before it counts. Cost: one fsync per node
-        # (~1 Hz), negligible here.
+        # Journal on disk + synchronous writes: the map survives a power cut.
         'DbSqlite3/JournalMode': s('1'),
         'DbSqlite3/Synchronous': s('2'),
 
-        # --- mapping vs localization ----------------------------------------
-        # IncrementalMemory false stops new nodes being created: the robot
-        # localises against the stored map instead of extending it.
         'Mem/IncrementalMemory': if_loc('false', 'true'),
-        # Load the WHOLE map into working memory at startup. Without this the
-        # robot can only recognise places near where it thinks it already is,
-        # so a robot switched on somewhere unexpected never localises - it just
-        # sits there reporting no correction, which looks like a broken map.
+        # Load the WHOLE map into working memory at startup.
         'Mem/InitWMWithAllNodes': if_loc('true', 'false'),
     }]
 
@@ -182,9 +113,6 @@ def generate_launch_description():
         ('odom', '/odometry/filtered'),
     ]
 
-    # --delete_db_on_start is a command-line ARGUMENT, not a parameter, and
-    # arguments cannot be made conditional within one Node. Hence two
-    # declarations sharing one params/remaps definition; exactly one ever runs.
     rtabmap_fresh = Node(
         package='rtabmap_slam', executable='rtabmap', name='rtabmap',
         output='screen',

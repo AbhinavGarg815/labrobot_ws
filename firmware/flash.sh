@@ -1,17 +1,8 @@
 #!/usr/bin/env bash
 # Compile and flash the labrobot firmware to the Arduino Mega, headless.
-#
 #   firmware/flash.sh              production build (binary protocol), upload
 #   firmware/flash.sh --bench      bench build (human console), upload + monitor
 #   firmware/flash.sh --check      compile BOTH modes, do not touch the board
-#
-# Production mode speaks the framed binary protocol to the Jetson at 500000 baud
-# and brakes both wheels if commands stop arriving. Bench mode is the console
-# used to commission the drives; see the key list printed on connect.
-#
-# The board is addressed through the /dev/labrobot_mcu udev symlink, which is
-# pinned to its USB serial number, so it cannot accidentally target a phone or
-# another CDC-ACM device.
 
 set -euo pipefail
 
@@ -78,7 +69,5 @@ echo
 echo "=== serial console @ ${BENCH_BAUD} (Ctrl-C to exit) ==="
 echo "keys: f=fwd b=rev l/r=spin s=stop n=neutral +/-=speed h=zero e=estop"
 echo "      ?=status d=raw-dump p=probe"
-# The Mega resets when the port is opened, so give the bootloader time to hand
-# over before the banner is expected.
 sleep 2
 arduino-cli monitor -p "$PORT" -c baudrate="$BENCH_BAUD"

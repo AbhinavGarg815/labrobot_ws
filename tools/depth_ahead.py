@@ -2,11 +2,6 @@
 """Top-down view of what the camera sees ahead, in the robot frame.
 
     python3 tools/depth_ahead.py
-
-One row per 20 cm of distance, one column per 10 cm laterally (left of the
-robot on the LEFT). Only returns 0.10-0.90 m above the floor are shown - the
-same height band the costmap marks - so floor and ceiling are excluded.
-Use it to see a gap with your own eyes before asking Nav2 to drive through it.
 """
 import time, numpy as np, rclpy, tf2_ros
 from rclpy.node import Node

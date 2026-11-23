@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""Reference outputs from the ORIGINAL PyTorch models, for parity checks.
-
-Runs in the export venv:
-    ~/venvs/pf_export/bin/python -I tools/follow_model_reference.py
-Writes ~/labrobot_models/reference.npz: the test image (Ultralytics' bus.jpg
-resized to 640x480 RGB), Ultralytics' own pose predictions on it, and the
-re-ID embeddings PyTorch gives for each detected person's crop.
-tools/check_follow_models.py (system Python, TensorRT) compares against it.
-"""
+"""Reference outputs from the ORIGINAL PyTorch models, for parity checks."""
 
 from pathlib import Path
 

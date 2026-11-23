@@ -17,8 +17,6 @@ uint16_t WheelDrive::desiredControlWord() const {
   if (estopped_) return CTRL_ESTOP;
   if (disabled_) return CTRL_DISABLE_CW;
 
-  // Brake rather than disable at zero: a disabled drive freewheels, which on a
-  // diff-drive base means the robot can be pushed or roll on a slope.
   if (target_rpm_ == 0) {
     return applied_control_ == CTRL_ENABLE_CCW || applied_control_ == CTRL_BRAKE_CCW
                ? CTRL_BRAKE_CCW
@@ -28,8 +26,6 @@ uint16_t WheelDrive::desiredControlWord() const {
 }
 
 void WheelDrive::setTargetRpm(int16_t base_motor_rpm) {
-  // Any explicit command clears a latched e-stop or freewheel; the caller is
-  // asserting control again.
   estopped_ = false;
   disabled_ = false;
 
@@ -66,8 +62,6 @@ void WheelDrive::emergencyStop() {
 
 void WheelDrive::requestSetHome() {
   home_pending_ = true;
-  // Position is about to jump to zero; differentiating across that step would
-  // report a huge phantom velocity.
   velocity_valid_ = false;
   velocity_cps_ = 0.0f;
 }
@@ -90,8 +84,6 @@ void WheelDrive::startNextTransaction() {
       break;
   }
 
-  // Zeroing the encoder must happen before anything else, or odometry would
-  // briefly report the pre-home value as if it were post-home.
   if (home_pending_) {
     if (modbus_.beginWrite(REG_CONTROL, CTRL_SET_HOME)) {
       action_ = Action::CONTROL;
@@ -102,8 +94,6 @@ void WheelDrive::startNextTransaction() {
     return;
   }
 
-  // Direction/enable before magnitude: applying a new speed while the drive
-  // still holds the old direction bit would briefly drive the wrong way.
   if (control_dirty_) {
     const uint16_t word = desiredControlWord();
     if (modbus_.beginWrite(REG_CONTROL, word)) {
@@ -115,10 +105,6 @@ void WheelDrive::startNextTransaction() {
     return;
   }
 
-  // Starvation guard: if writes have crowded out position reads for too long,
-  // take the slot for a read. The speed write is only deferred by one
-  // transaction (~37 ms) and stays queued, whereas stale odometry silently
-  // corrupts every consumer downstream of it.
   if (writes_since_pos_ >= kMaxWritesBetweenPos) {
     if (modbus_.beginRead(REG_POS_FB_LSB, 2)) {
       action_ = Action::READ_POS;
@@ -139,8 +125,7 @@ void WheelDrive::startNextTransaction() {
     return;
   }
 
-  // Nothing to write, so spend the slot on position. Every spare slot goes
-  // here: velocity is differentiated from it rather than read separately.
+  // Nothing to write, so spend the slot on position.
   if (modbus_.beginRead(REG_POS_FB_LSB, 2)) {
     action_ = Action::READ_POS;
     writes_since_pos_ = 0;
@@ -155,8 +140,7 @@ void WheelDrive::poll() {
 
     switch (action_) {
       case Action::READ_POS: {
-        // Registers arrive LSB (addr 20) then MSB (addr 22). Assemble as
-        // unsigned then reinterpret, so reverse travel sign-extends correctly.
+        // Registers arrive LSB (addr 20) then MSB (addr 22).
         const uint32_t raw =
             (static_cast<uint32_t>(modbus_.responseRegister(1)) << 16) |
             modbus_.responseRegister(0);
@@ -190,8 +174,6 @@ void WheelDrive::poll() {
   } else if (modbus_.failed()) {
     if (consecutive_faults_ < 255) ++consecutive_faults_;
 
-    // A failed write never reached the drive, so re-queue it rather than
-    // assuming the commanded value is in effect.
     if (action_ == Action::CONTROL) control_dirty_ = true;
     if (action_ == Action::SPEED) speed_dirty_ = true;
 

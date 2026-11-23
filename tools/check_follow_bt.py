@@ -1,12 +1,7 @@
 #!/usr/bin/env python3
-"""Load the person-following behaviour tree in the live bt_navigator without
-driving anywhere: a NavigateToPose goal with behavior_tree=follow_person.xml
-at the robot's CURRENT pose (odom), held for --secs, a few /goal_update
-messages at the same pose, then cancelled. Prints the robot's displacement.
+"""
 
     python3 tools/check_follow_bt.py [--secs 15]
-
-The robot should not move (goal = where it is, facing where it faces).
 """
 import argparse
 import math

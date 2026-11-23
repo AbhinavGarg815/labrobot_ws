@@ -2,11 +2,6 @@
 """Check named waypoints against the LIVE global costmap, without driving.
 
     python3 tools/check_waypoints.py t1 t2 t3
-
-Uses the same rule as `waypoints.py go` (feasible_target): a waypoint is
-clear if it is free and in the robot's connected free region; otherwise the
-mission would approach the nearest reachable spot within 0.5 m, or skip it.
-Run with the navigation stack up (needs /global_costmap/costmap_raw and TF).
 """
 import os
 import sys

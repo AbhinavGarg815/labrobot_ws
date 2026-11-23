@@ -1,12 +1,4 @@
 // Host-side tests for the RMCS-2303 MODBUS ASCII driver.
-//
-// Build and run:
-//     firmware/test/run_tests.sh
-//
-// The expected frames below are hand-computed from the RMCS-2303 Operating
-// Manual v1.0 framing rule:
-//     ':' slave fc addrHi addrLo dataHi dataLo lrc CRLF
-//     LRC = two's complement of the sum of the raw payload bytes.
 
 #include "../labrobot_firmware/rmcs2303.h"
 
@@ -49,8 +41,6 @@ static void expectTrue(const char* what, bool cond) {
   }
 }
 
-// Drives poll() until the transaction leaves AWAITING or the fake clock runs
-// past the driver timeout.
 static void pumpUntilSettled(Rmcs2303& drv, HardwareSerial& port) {
   (void)port;
   for (int i = 0; i < 1000; ++i) {
@@ -63,9 +53,6 @@ static void pumpUntilSettled(Rmcs2303& drv, HardwareSerial& port) {
 int main() {
   std::printf("RMCS-2303 driver tests\n");
 
-  // --- Write framing -------------------------------------------------------
-  // Enable + CW in digital speed mode: slave 7, FC 06, reg 2, value 0x0101.
-  // sum = 07+06+00+02+01+01 = 0x11 -> LRC = 0xEF
   {
     HardwareSerial port;
     Rmcs2303 drv;
@@ -79,7 +66,6 @@ int main() {
   }
 
   // Speed command: slave 7, FC 06, reg 14 (0x0E), 1446 rpm (0x05A6).
-  // sum = 07+06+00+0E+05+A6 = 0xC6 -> LRC = 0x3A
   {
     HardwareSerial port;
     Rmcs2303 drv;
@@ -88,9 +74,6 @@ int main() {
     expectEq("write frame (speed 1446)", port.tx, ":0706000E05A63A\r\n");
   }
 
-  // --- Read framing --------------------------------------------------------
-  // Position feedback: slave 7, FC 03, reg 20 (0x14), 2 registers.
-  // sum = 07+03+00+14+00+02 = 0x20 -> LRC = 0xE0
   {
     HardwareSerial port;
     Rmcs2303 drv;
@@ -99,9 +82,6 @@ int main() {
     expectEq("read frame (position, 2 regs)", port.tx, ":070300140002E0\r\n");
   }
 
-  // --- Read response, positive position ------------------------------------
-  // Reply carrying LSB=0x2345, MSB=0x0001 -> position 0x00012345.
-  // sum = 07+03+04+23+45+00+01 = 0x77 -> LRC = 0x89
   {
     HardwareSerial port;
     Rmcs2303 drv;
@@ -116,9 +96,6 @@ int main() {
     expectEqU32("assembled position", pos, 0x00012345u);
   }
 
-  // --- Read response, negative position ------------------------------------
-  // Reverse travel must sign-extend correctly: LSB=0xFFFF, MSB=0xFFFF is -1.
-  // sum = 07+03+04+FF+FF+FF+FF = 0x0A (mod 256) -> LRC = 0xF6
   {
     HardwareSerial port;
     Rmcs2303 drv;
@@ -133,9 +110,6 @@ int main() {
     expectTrue("position sign-extends to -1", pos == -1);
   }
 
-  // --- Corrupt LRC is rejected, and does NOT kill the link -----------------
-  // This is the specific defect that makes the vendor library unusable: it
-  // calls port->end() here, permanently disabling the motor UART.
   {
     HardwareSerial port;
     Rmcs2303 drv;
@@ -156,8 +130,6 @@ int main() {
     expectTrue("recovers on next good frame", drv.complete());
   }
 
-  // --- Reply from the wrong slave is ignored -------------------------------
-  // sum = 09+03+04+23+45+00+01 = 0x79 -> LRC = 0x87
   {
     HardwareSerial port;
     Rmcs2303 drv;
@@ -168,7 +140,7 @@ int main() {
     expectTrue("foreign slave reply rejected", drv.failed());
   }
 
-  // --- Timeout on a silent drive -------------------------------------------
+  // Timeout on a silent drive
   {
     HardwareSerial port;
     Rmcs2303 drv;
@@ -180,8 +152,6 @@ int main() {
     expectTrue("timeout counted", drv.timeouts() == 1);
   }
 
-  // --- Resynchronisation after truncated frame -----------------------------
-  // A partial frame followed by a good one must still parse: ':' resets state.
   {
     HardwareSerial port;
     Rmcs2303 drv;

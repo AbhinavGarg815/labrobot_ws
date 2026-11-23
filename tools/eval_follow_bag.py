@@ -2,20 +2,6 @@
 """Run the person pipeline offline on a recorded bag (scripts/record_people.sh).
 
     python3 tools/eval_follow_bag.py ~/labrobot_bags/NAME [--lock-at 3.0] [--video]
-        [--detector yolo26s-pose] [--reid osnet_ain_x1_0_msmt17]
-
-Reads the bag directly (no playback, deterministic, every frame processed),
-rebuilds TF from /tf and /tf_static, and runs labrobot_follow.pipeline - the
-same code as the live node. --lock-at T: at bag time T s, lock the nearest
-person ahead (what `start` does live); --select-at T:ID locks a given track.
-
-Writes into <bag>/eval_<detector>_<reid>/:
-  frames.csv   per frame: time, state, target id, range, bearing, odom x/y,
-               re-ID score, people, stage times
-  events.txt   lock / switch / re-identified / ...
-  tracks.csv   per frame per track: id, box, score, clean, range, bearing
-  video.avi    annotated frames (with --video; MJPG, half size)
-and prints a summary. Robot not involved.
 """
 
 import argparse
@@ -65,8 +51,6 @@ def read_bag(path):
 
 
 def _reid_cols(pipe, tr):
-    """Appearance score of this track's detection against the target memory
-    (and the best distractor), for threshold tuning; '' when not available."""
     f = tr.det.get('feat') if tr.matched_this_frame else None
     if f is None or not pipe.identity.has_model:
         return ''

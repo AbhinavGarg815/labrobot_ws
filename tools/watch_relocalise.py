@@ -2,11 +2,6 @@
 """Watch RTAB-Map localisation mode until the robot recognises the saved map.
 
     python3 tools/watch_relocalise.py [--seconds 150]
-
-Prints each loop closure (a match of the current view against a stored node)
-with its hypothesis, and the map->base_footprint pose before and after, so a
-relocalisation is visible as a pose JUMP from the startup guess to the real
-position. Exits after the first few matches or the timeout.
 """
 import argparse, math, sys, time
 import rclpy, tf2_ros
@@ -26,9 +21,7 @@ def pose():
     except Exception:
         return None
 def stat(m, key):
-    # Exact-key lookup in the statistics arrays. rtabmap_msgs/Info has NO
-    # hypothesis field - an earlier version read m.highest_hypothesis_value and
-    # crashed on the first match, i.e. exactly when it had something to report.
+    # Exact-key lookup in the statistics arrays.
     for k, v in zip(m.stats_keys, m.stats_values):
         if k == key:
             return v

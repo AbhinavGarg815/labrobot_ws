@@ -2,24 +2,6 @@
 """Publish a PLY point cloud as a latched PointCloud2, for viewing in Foxglove.
 
     ros2 run labrobot_bringup publish_cloud.py --ply docs/maps/lab_dense_cloud.ply
-
-Why this exists
----------------
-`/cloud_map` from RTAB-Map is built from the OCCUPANCY GRID, which is shaped for
-Nav2 rather than for looking at:
-
-  * `Grid/MaxObstacleHeight: 0.90` crops everything above the robot's own height,
-    so the 3D view is a 90 cm slice with no upper walls, shelves or ceiling;
-  * `Grid/CellSize: 0.05` voxelises to 5 cm.
-
-Both are correct for navigation and wrong for a visual map. `rtabmap-export`
-reads the raw RGB-D from the database instead, with no height crop and a finer
-voxel, which is what the RTAB-Map viewer renders. This node serves that file to
-Foxglove so the result can be seen without a desktop GUI.
-
-The topic is TRANSIENT_LOCAL (latched): the cloud is sent once to each subscriber
-that connects, rather than re-sent continuously. A 850k-point cloud is ~14 MB, so
-streaming it at any rate would saturate the link for no benefit.
 """
 
 import argparse
@@ -50,12 +32,7 @@ _PLY_TYPES = {
 
 
 def read_ply(path):
-    """Minimal binary-little-endian PLY reader for the vertex element.
-
-    Deliberately not a general PLY library: it reads the vertex element and
-    stops. rtabmap-export writes `element face 0` and an `element camera` after
-    the vertices, which a naive reader would either choke on or silently include.
-    """
+    """Minimal binary-little-endian PLY reader for the vertex element."""
     with open(path, 'rb') as f:
         if f.readline().strip() != b'ply':
             raise ValueError('not a PLY file')
@@ -132,17 +109,12 @@ def main():
 
     rclpy.init()
     node = Node('publish_cloud')
-    # Latched: send once per subscriber. Re-sending 14 MB continuously would
-    # saturate the link and tell the viewer nothing new.
+    # Latched: send once per subscriber.
     qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                      durability=DurabilityPolicy.TRANSIENT_LOCAL)
     pub = node.create_publisher(PointCloud2, args.topic, qos)
 
     # Publish a static transform for the cloud's own frame unless told not to.
-    # Viewing a saved map is usually done with the robot stack STOPPED, so no TF
-    # exists at all - and a 3D viewer with no transform for the data's frame
-    # renders an empty panel with no error. That looks exactly like the cloud
-    # having failed to publish. One identity transform makes the frame exist.
     tf_bc = None
     if not args.no_tf:
         tf_bc = StaticTransformBroadcaster(node)
@@ -178,8 +150,6 @@ def main():
     print('  latched - open a Foxglove 3D panel on this topic. Ctrl-C to stop.')
 
     try:
-        # Re-publish slowly so a viewer connecting late still gets it even if the
-        # transient-local handshake is missed.
         timer_period = 5.0
         node.create_timer(timer_period, lambda: pub.publish(msg))
         rclpy.spin(node)

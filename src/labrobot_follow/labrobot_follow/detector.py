@@ -1,9 +1,4 @@
-"""Person detection with keypoints (YOLO pose, TensorRT) and re-ID embedding.
-
-Both engines take uint8 RGB pixels; scaling/normalisation is inside the
-graph (tools/export_follow_models.py), so the CPU work per frame is one copy
-for the detector and a crop+resize per person for re-ID.
-"""
+"""Person detection with keypoints (YOLO pose, TensorRT) and re-ID embedding."""
 
 import cv2
 import numpy as np
@@ -12,7 +7,7 @@ from .trt_engine import TrtEngine
 
 
 def nms_xyxy(boxes, scores, iou_thresh):
-    """Plain greedy NMS. boxes (N,4) xyxy. Returns kept indices, best first."""
+    """Plain greedy NMS."""
     order = np.argsort(-scores)
     keep = []
     x1, y1, x2, y2 = boxes.T
@@ -34,19 +29,11 @@ def nms_xyxy(boxes, scores, iou_thresh):
 
 
 def decode_pose_output(out, conf_thresh=0.15, iou_thresh=0.6, max_det=30):
-    """Decode a YOLO pose head into a list of {box, score, kpts}.
-
-    Accepts the two layouts Ultralytics exports:
-      * (56, N): rows cx, cy, w, h, score, 17 x (x, y, conf) - needs NMS
-        (YOLO11-pose; YOLO26-pose exported with end2end False);
-      * (N, 57): x1, y1, x2, y2, score, class, 17 x 3 - NMS-free head.
-    """
+    """Decode a YOLO pose head into a list of {box, score, kpts}."""
     out = np.asarray(out)
     if out.ndim == 3:
         out = out[0]
     if out.shape[0] == 56:
-        # pick the few confident columns first; transposing all 6300 x 56
-        # floats every frame cost more CPU than the rest of the decode
         idx = np.flatnonzero(out[4] >= conf_thresh)
         if not idx.size:
             return []
@@ -76,7 +63,7 @@ class PoseDetector:
         self.iou_thresh = iou_thresh
 
     def __call__(self, rgb):
-        """rgb: HxWx3 uint8. Boxes/keypoints come back in rgb's pixel coords."""
+        """rgb: HxWx3 uint8."""
         ih, iw = rgb.shape[:2]
         dst = self.trt.inputs[self.in_name][0]
         if (ih, iw) == (self.h, self.w):
@@ -127,9 +114,6 @@ class ReidEncoder:
 
 
 def mark_clean(dets, img_w, overlap_frac=0.15, edge_px=4):
-    """A detection is 'clean' (safe to learn appearance from) if no other box
-    covers more than overlap_frac of it and it is not cut by the left/right
-    image edge (a half person is a different appearance)."""
     for i, d in enumerate(dets):
         b = d['box']
         area = max((b[2] - b[0]) * (b[3] - b[1]), 1e-9)

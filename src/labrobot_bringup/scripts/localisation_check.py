@@ -1,24 +1,8 @@
 #!/usr/bin/env python3
-"""Is the robot's map pose right? Refuse to navigate on a wrong one.
+"""Is the robot's map pose right?
 
     ros2 run labrobot_bringup localisation_check.py            # report only
     ros2 run labrobot_bringup localisation_check.py --selftest # prove it works
-
-Also imported by nav_goal.py, which will not send a goal unless this passes.
-
-Why this exists
----------------
-On 2026-10-07 the robot was moved by hand between tests. Neither wheels nor
-gyro saw it, so the map pose was 1.8 m wrong when the next goal was issued.
-RTAB-Map corrected it 13 s into the run - after the goal had already been
-computed from the wrong pose - and the robot drove 2.5 m past where it should
-have stopped. Nothing checked the pose before moving.
-
-How it decides
---------------
-See evaluate(): far live obstacle points landing in mapped free space, and
-the share of points near mapped obstacles, at the CURRENT pose. A guard against
-gross errors (hand moves, stale startup pose), not a precise pose estimate.
 """
 import argparse
 import math
@@ -71,11 +55,7 @@ def gather(node, buf, seconds=6.0):
     if missing:
         return None, f'missing {", ".join(missing)}'
     d, K, M = st['d'], st['k'], st['m']
-    # Wait for the transforms rather than failing on the first miss. Called from
-    # nav_goal.py the node is only a moment old: map->base_footprint arrives
-    # quickly on /tf, but the camera's fixed frames come from /tf_static and can
-    # lag behind. The first version looked up once and reported UNSURE ("two or
-    # more unconnected trees") on a perfectly good pose.
+    # Wait for the transforms rather than failing on the first miss.
     cam = pose = None
     err = None
     deadline = time.time() + 5.0
@@ -104,29 +84,7 @@ def gather(node, buf, seconds=6.0):
 
 
 def evaluate(data, offset=(0.0, 0.0, 0.0)):
-    """Verdict from two numbers, computed at the current pose only.
-
-      free_far   share of the FARTHER half of the live obstacle points that land
-                 in mapped free space (not within 10 cm of a mapped obstacle).
-                 A wrong pose pushes walls into free space; moved or new objects
-                 mostly sit up close, so the near half is left out.
-      near_obs   share of ALL points within 10 cm of a mapped obstacle. Catches
-                 poses so far off that the points fall beyond the walls, into
-                 unknown space, where free_far cannot see them.
-
-    WRONG if free_far > 25% or near_obs < 60%.
-
-    This REPLACED a +-2 m / +-15 deg pose search (2026-10-13). The search kept
-    finding "better" poses for a pose the user could see was right in Foxglove
-    (83.8% of points on mapped obstacles, 0.0% in free space), because a single
-    view barely constrains error along the line of sight. Its self-test only
-    proved that wrong poses fail - never that the right one passes. Measured on
-    that confirmed-correct view: current 6.7% / 96.2% (OK); 15 cm sideways
-    27.8%; 5 deg 34.2%; 12 deg 39.4%; 0.6 m back + 0.4 m left 39.4%; 1.8 m
-    forward 0.0% / 43.7%; all caught. 0.3 m straight forward is NOT caught
-    (0.0% / 98.4%) - one view cannot see it. RTAB-Map's own localisation is the
-    primary source of the pose; this is a guard against gross errors.
-    """
+    """Verdict from two numbers, computed at the current pose only."""
     P, M = data['pts'], data['map']
     x0, y0, yaw0 = data['x'] + offset[0], data['y'] + offset[1], data['yaw'] + offset[2]
     res = M.info.resolution

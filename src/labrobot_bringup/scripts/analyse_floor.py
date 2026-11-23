@@ -1,25 +1,7 @@
 #!/usr/bin/env python3
 """Full floor capture: verify the camera model and measure what it can actually see.
 
-Park the robot on flat, open floor, then:
-
     ros2 run labrobot_bringup analyse_floor.py
-
-check_ground_plane.py answers "is the mount pose right?". This goes further and
-answers the questions M4 will need:
-
-  * camera HEIGHT, measured from the floor rather than taken from CAD
-  * camera PITCH and ROLL, likewise
-  * depth NOISE as a function of range - stereo error grows with range^2, so a
-    single RMS number hides how bad the far field really is
-  * the BLIND ZONE - how close to the robot the floor first becomes visible.
-    On a robot whose only sensor is a camera 0.84 m up and tilted down, this is
-    the distance inside which an obstacle is simply invisible, and Nav2 has to
-    be told about it rather than discovering it by collision.
-  * usable RANGE and lateral COVERAGE
-
-Averaging several frames is deliberate: one frame of D435i depth is noisy enough
-that a single capture would flatter or slander the sensor depending on luck.
 """
 
 import argparse
@@ -169,7 +151,7 @@ def main():
 
         print(f'captured {len(node.frames)} frames, {len(results)} usable\n')
 
-        # --- geometry, averaged over frames ---------------------------------
+        # geometry, averaged over frames
         heights, pitches, rolls, rmss = [], [], [], []
         for n, d, inl in results:
             heights.append(-d / n[2])
@@ -190,8 +172,6 @@ def main():
         print(f'  roll error   : {rm:+7.3f} +/- {rs:.3f} deg')
         print()
 
-        # The plane's perpendicular distance from the camera origin IS the camera
-        # height above the floor - measured, independent of the URDF's camera_z.
         n0, d0, _ = results[0]
         cam_h = abs(n0 @ cam_pos + d0)
         print('CAMERA HEIGHT, measured independently of the URDF')

@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone test of the collision monitor config. The robot does NOT move.
-
-Starts nav2_collision_monitor with config/collision_monitor.yaml but every
-topic redirected to /test/... (input command, output command, cloud), feeds
-it a forward command and synthetic point clouds in base_footprint, and
-checks the output:
-
-  1. empty cloud                      -> command passes unchanged
-  2. 50 points in the stop zone       -> zero
-  3. 50 points 0.25-0.37 m ahead of the bumper -> unchanged (approach model:
-     more than 1.5 s away at 0.10 m/s; no slowdown polygon since 2026-11-12)
-  4. 5 points in the stop zone        -> unchanged (noise tolerance)
-  5. points at 0.15 m height but beside the robot -> unchanged
-  6. cloud stops (source timeout)     -> unchanged (fails OPEN - documented)
+"""Standalone test of the collision monitor config.
 
     python3 tools/test_collision_monitor.py
 """
@@ -22,6 +9,7 @@ import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 
 import rclpy
@@ -81,8 +69,7 @@ def main():
 
 def rewrite_params():
     """Copy of the config keyed by the test node's name."""
-    out = '/tmp/collision_monitor_test.yaml'
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    out = os.path.join(tempfile.gettempdir(), 'collision_monitor_test.yaml')
     with open(CONFIG) as f:
         txt = f.read()
     with open(out, 'w') as f:
@@ -112,8 +99,6 @@ def run_cases():
         ('empty cloud passes', [], lambda v: all(abs(x - 0.10) < 1e-6 for x in v)),
         ('50 pts in stop zone -> 0', block(0.25, 0.33, -0.2, 0.2, 0.6, 50),
          lambda v: all(abs(x) < 1e-6 for x in v)),
-        # no slowdown polygon any more; at 0.10 m/s an obstacle 0.25-0.37 m
-        # ahead of the bumper is > 1.5 s away -> approach leaves it alone
         ('50 pts 0.46-0.58 m ahead pass (approach: >1.5 s)', block(0.46, 0.58, -0.25, 0.25, 0.4, 50),
          lambda v: all(abs(x - 0.10) < 1e-3 for x in v)),
         ('5 pts in stop zone (noise) pass', block(0.25, 0.33, -0.2, 0.2, 0.6, 5),

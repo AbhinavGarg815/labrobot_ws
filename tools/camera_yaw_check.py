@@ -2,30 +2,6 @@
 """Measure the camera's YAW mounting error by driving straight at a gap.
 
     python3 tools/camera_yaw_check.py --drive 0.8
-
-Why
----
-The URDF's camera roll and pitch were measured from gravity; yaw cannot be, so
-it is assumed 0. If the camera is actually turned by delta on its mount, every
-obstacle is reported rotated by -delta about the camera: a point at distance x
-appears shifted sideways by about x * delta. Navigation then centres the robot
-on a gap that is not where the gap is. Three gap runs (72 cm and 61 cm, two
-setups) all ran 4-7 cm RIGHT of centre - systematic, not grid rounding.
-
-Method
-------
-1. Measure the gap's inner edges per 10 cm slice (10 stacked depth frames),
-   and convert each edge to the ODOM frame using the current odom pose.
-2. Drive straight forward --drive metres at 0.05 m/s (odometry-closed, with a
-   heading hold), stopping early if anything is within the corridor.
-3. Measure again from the closer pose, again into odom.
-A real, static edge is at the same odom position both times. With a yaw error
-it is not: its apparent sideways position changes by (x_A - x_B) * delta, where
-x is its distance from the robot at each measurement. The gap CENTRE is used
-(average of both edges), so a slightly wrong gap width cancels out.
-
-delta > 0 means the camera points LEFT of the robot's heading; the URDF fix is
-a yaw of +delta on the camera mount joint.
 """
 import argparse, math, time
 import numpy as np, rclpy, tf2_ros
@@ -132,7 +108,7 @@ def main():
         if abs(fwdA - fwdB) > 0.05: continue
         dx = ra['x_robot'] - rb['x_robot']
         if dx < 0.2: continue
-        # apparent lateral = true - x*delta  ->  latB - latA = (xA - xB)*delta
+        # apparent lateral = true - x*delta -> latB - latA = (xA - xB)*delta
         d = (latB - latA) / dx
         est.append(d)
         print(f'    {fwdA:5.2f} m         {ra["x_robot"]:5.2f}    {rb["x_robot"]:5.2f}    {latA:+.3f}             {latB:+.3f}   {math.degrees(d):+.2f} deg')

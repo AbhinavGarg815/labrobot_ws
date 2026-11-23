@@ -1,27 +1,5 @@
 #!/usr/bin/env python3
-"""Drive-test and odometry-calibration tool for the labrobot.
-
-All motions are closed-loop on /diff_drive_controller/odom and every one of them
-has a distance limit, a time limit and a guaranteed stop on exit. This robot has
-no kill switch, so the tool must never be the reason the wheels keep turning.
-
-    # sanity: 0.30 m forward at 0.05 m/s, report commanded vs odometry
-    drive_test.py --straight 0.30 --speed 0.05
-
-    # spin 360 deg in place, report commanded vs odometry
-    drive_test.py --rotate 360 --omega 0.4
-
-    # UMBmark: 2 m square, clockwise then anticlockwise
-    drive_test.py --square 2.0 --direction cw
-    drive_test.py --square 2.0 --direction ccw
-
-UMBmark (Borenstein & Feng) separates the two systematic odometry errors that a
-straight-line test cannot tell apart:
-  * wrong wheel separation      -> every turn is off by a constant factor
-  * unequal effective radii     -> the robot curves on what should be straights
-Running the square both ways makes the two errors add in one direction and
-cancel in the other, so they can be solved for independently.
-"""
+"""Drive-test and odometry-calibration tool for the labrobot."""
 
 import argparse
 import math
@@ -46,16 +24,7 @@ def ang_diff(a: float, b: float) -> float:
 
 class DriveTest(Node):
     CMD_TOPIC = '/diff_drive_controller/cmd_vel_unstamped'
-    # The EKF, NOT /diff_drive_controller/odom. Closing a rotation loop on wheel
-    # odometry means spinning until the WHEELS believe they are done - and they
-    # over-report rotation by 4-12% through castor slip (Problem 25). A commanded
-    # 360 deg then physically delivered ~315, and the tool's own report of
-    # "360.70 deg" was a tautology rather than evidence. The EKF takes yaw from
-    # the gyro, which measured 316.42 against a floor-marked ~315.
-    #
-    # Distance is unaffected either way - the EKF's vx comes from the wheels and
-    # the two agree to 0.1 mm over 1 m - so this only changes rotation, for the
-    # better.
+    # The EKF, NOT /diff_drive_controller/odom.
     ODOM_TOPIC = '/odometry/filtered'
 
     def __init__(self, args):
@@ -64,10 +33,7 @@ class DriveTest(Node):
         self.pub = self.create_publisher(Twist, self.CMD_TOPIC, 10)
         if getattr(args, 'odom_topic', None):
             self.ODOM_TOPIC = args.odom_topic
-        # diff_drive_controller publishes BEST_EFFORT and robot_localization
-        # RELIABLE. A RELIABLE subscriber never matches a BEST_EFFORT publisher,
-        # so the tool would hang waiting for a first message that is being
-        # published all along; BEST_EFFORT matches both.
+        # diff_drive_controller publishes BEST_EFFORT and robot_localization RELIABLE.
         self.sub = self.create_subscription(
             Odometry, self.ODOM_TOPIC, self._on_odom,
             QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT))
@@ -80,7 +46,7 @@ class DriveTest(Node):
         self.odom = msg
         self.have_odom = True
 
-    # -- primitives -----------------------------------------------------------
+    # primitives
 
     def spin_once(self, timeout=0.05):
         rclpy.spin_once(self, timeout_sec=timeout)
@@ -111,14 +77,7 @@ class DriveTest(Node):
             self.spin_once(0.02)
         self.publish(0.0, 0.0)
 
-    # Slowing down before the target is not cosmetic. Commanding full speed
-    # right up to the line and then stopping overshoots by
-    #     v * latency + v^2 / (2a)
-    # and the latency term dominates here: a stop has to travel the USB link and
-    # then two ~37 ms Modbus writes (control, then speed), queued behind whatever
-    # transaction is already in flight. Measured at 0.4 rad/s that was ~13.7 deg
-    # per turn - which over the four turns of a UMBmark square is ~55 deg of
-    # accumulated error, enough to make the whole measurement meaningless.
+    # Slowing down before the target is not cosmetic.
     RAMP_ZONE_M = 0.15      # start easing off this far out
     CREEP_MPS = 0.02        # slow enough that the latency term is ~10 mm
     RAMP_ZONE_RAD = 0.35    # ~20 deg
@@ -136,8 +95,7 @@ class DriveTest(Node):
         x0, y0, _ = self.pose()
         sign = 1.0 if distance >= 0 else -1.0
         target = abs(distance)
-        # Generous ceiling. The creep phase makes the leg slower than
-        # distance/speed, so allow for that as well as for a stalled robot.
+        # Generous time limit: allows for the creep phase and a stalled robot.
         limit_s = target / max(abs(speed), 1e-3) * 3.0 + target / self.CREEP_MPS + 5.0
         t0 = self.get_clock().now()
 
@@ -177,8 +135,6 @@ class DriveTest(Node):
         while rclpy.ok():
             self.spin_once(0.02)
             _, _, yaw = self.pose()
-            # Accumulate incrementally: a raw yaw difference cannot represent a
-            # rotation of more than pi, so a 360 deg turn would read as zero.
             swept += abs(ang_diff(yaw, prev))
             prev = yaw
             if swept >= target:
@@ -213,10 +169,7 @@ def run(node, args):
         print(f'\ndriving {args.straight:.3f} m at {args.speed:.3f} m/s ...')
         got = node.drive_straight(args.straight, args.speed)
         x, y, yaw = node.pose()
-        # Resolve displacement in the START frame. Reporting raw odom-frame y as
-        # "lateral drift" is wrong whenever the robot did not begin pointing
-        # along +x: starting at 13.7 deg made a dead-straight 1 m run look like
-        # 242 mm of drift, which is just sin(13.7 deg).
+        # Resolve displacement in the START frame.
         dx, dy = x - x0, y - y0
         fwd = dx * math.cos(yaw0) + dy * math.sin(yaw0)
         lat = -dx * math.sin(yaw0) + dy * math.cos(yaw0)
@@ -267,9 +220,6 @@ def main():
     ap.add_argument('--rotate', type=float, help='degrees to rotate in place')
     ap.add_argument('--square', type=float, help='UMBmark square side in metres')
     ap.add_argument('--direction', choices=['cw', 'ccw'], default='cw')
-    # Defaults are deliberately well below the 0.26 m/s / 1.5 rad/s limits:
-    # slow motion keeps wheel slip - which would masquerade as an odometry
-    # error - to a minimum, and slip is exactly what calibration must exclude.
     ap.add_argument('--odom-topic', default=None,
                     help='override the feedback source; defaults to the EKF. Pass '
                          '/diff_drive_controller/odom to drive on raw wheel '

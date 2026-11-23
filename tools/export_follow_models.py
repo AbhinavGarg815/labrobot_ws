@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
-"""Export the person-following models to ONNX, with preprocessing in the graph.
-
-Runs in the EXPORT venv (torch CPU, ultralytics, boxmot), never in ROS:
-    ~/venvs/pf_export/bin/python -I tools/export_follow_models.py --all
-Normally called by tools/build_follow_models.sh, which then builds the
-TensorRT engines. Outputs go to ~/labrobot_models/onnx/.
-
-Each exported graph takes the camera's own pixels, so the robot's CPU only
-copies the frame:
-  * pose detector: input `image` uint8 [1, 480, 640, 3] RGB (the camera's
-    rgb8 frame as is); the graph casts, scales by 1/255 and transposes.
-    640x480 is used directly - both are multiples of 32, so no letterbox and
-    no wasted padding rows.
-  * re-ID: input `crops` uint8 [B, 256, 128, 3] RGB, dynamic B; the graph
-    normalises with the ImageNet mean/std the OSNet weights were trained
-    with, and L2-normalises the output, so cosine similarity is a dot product.
-"""
+"""Export the person-following models to ONNX, with preprocessing in the graph."""
 
 import argparse
 import os
@@ -89,8 +73,6 @@ def export_reid(weights_name, arch):
             self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1) * 255)
 
         def forward(self, crops):
-            # Cast BEFORE the transpose: TensorRT rejects uint8 intermediate
-            # tensors ("legalUINT8"), so the uint8 input must feed a Cast.
             x = crops.float().permute(0, 3, 1, 2)
             x = (x - self.mean) / self.std
             f = self.m(x)

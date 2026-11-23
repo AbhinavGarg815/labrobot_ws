@@ -9,26 +9,6 @@
     ros2 run labrobot_bringup waypoints.py go door bench shelf          # ROBOT MOVES
     ros2 run labrobot_bringup waypoints.py go door bench --return       # ... and back
     ros2 run labrobot_bringup waypoints.py go door bench --loop 3
-
-Waypoints live in docs/maps/waypoints.yaml (tracked in git, small). They are
-map-frame poses, so they belong to the map they were saved in: after a fresh
-map (not after lifelong-SLAM updates, which keep the frame) re-save them.
-
-`go` sends one NavigateToPose per waypoint, with a 2 s pause at each. Just
-before each leg the waypoint is checked on the LIVE costmap: if something now
-blocks it, the robot goes to the nearest reachable spot within 0.5 m
-(APPROACHED) instead; if there is none, the waypoint is skipped (BLOCKED) and
-the mission continues. It refuses to start unless the shared gate (nav_gate.py) passes:
-startup localisation confirmed and the current view matches the map.
-
-`go --wait-start` prepares the mission, then waits for a "go" on
-/labrobot/mission_cmd (std_msgs/String) - a Foxglove Publish panel button. A
-"stop" there at any time cancels the active goal, like Ctrl-C. Progress lines
-are also published (latched) on /labrobot/mission_status.
-
-`pick` saves a pose clicked in Foxglove without driving there: in a 3D panel,
-use "Publish pose" with the topic set to /waypoint_pick (NOT /goal_pose - the
-navigator subscribes to that and would start driving).
 """
 import argparse
 import datetime
@@ -133,11 +113,7 @@ def cmd_pick(tool, args):
     frame = m.header.frame_id or 'map'
     x, y, yaw = m.pose.position.x, m.pose.position.y, yaw_of(m.pose.orientation)
     if frame != 'map':
-        # Convert into the map frame with TF. Foxglove publishes in whatever
-        # frame its 3D panel displays (2026-10-29: base_link); refusing those
-        # clicks threw the user's waypoint away. The robot is localised, so
-        # frame -> map is known. Latest transform: the click is a place on the
-        # map display, not a measurement tied to its timestamp.
+        # Convert into the map frame with TF.
         try:
             tf = tool.buf.lookup_transform('map', frame, rclpy.time.Time(),
                                            timeout=rclpy.duration.Duration(seconds=3.0))
@@ -179,16 +155,6 @@ MAX_SHIFT_M = 0.50    # how far a blocked waypoint may be moved (user decision)
 
 
 def feasible_target(costmap, robot_xy, x, y, max_shift=MAX_SHIFT_M):
-    """Where to actually send the robot for waypoint (x, y), judged on the LIVE
-    global costmap: (tx, ty, shift_m), or None if nothing usable is within
-    max_shift.
-
-    The waypoint itself if the robot centre may stand there and it is connected
-    to the robot's free region; otherwise the nearest such cell within
-    max_shift. Connectivity matters: on 2026-10-31 an obstacle placed on r2 left
-    it cost 254 AND cut off from the robot's region, and the planner (correctly)
-    found no path - the old mission could only skip it.
-    """
     from scipy.ndimage import label
     md = costmap.metadata
     W, H, res = md.size_x, md.size_y, md.resolution
@@ -228,11 +194,6 @@ def cancel(tool, h, why):
 
 
 def cmd_go(tool, args):
-    """Drive the waypoints ONE AT A TIME (one NavigateToPose each), re-checking
-    each against the live costmap just before its leg, so a waypoint blocked
-    since it was saved - or during the mission - is approached to the nearest
-    reachable spot within 0.5 m instead of skipped. (Nav2's FollowWaypoints,
-    used before, takes the whole list up front and cannot do that.)"""
     wps = load()
     missing = [n for n in args.names if n not in wps]
     if missing:
@@ -253,11 +214,6 @@ def cmd_go(tool, args):
 
     status = tool.create_publisher(String, '/labrobot/mission_status',
                                    QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
-    # Person following (labrobot_follow) sets Nav2's speed limit; if it was
-    # killed without clearing it, a mission would run at that speed. Missions
-    # always run at the configured speed: clear any limit (0 = none).
-    # Published before every leg (a single message straight after creating
-    # the publisher can be lost to discovery).
     speed_reset = tool.create_publisher(SpeedLimit, '/speed_limit', 10)
 
     def say(text):
@@ -383,10 +339,6 @@ def main():
     s.add_argument('--wait-start', action='store_true',
                    help='wait for "go" on /labrobot/mission_cmd (e.g. a Foxglove Publish panel)')
     args, _ = ap.parse_known_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
-    # No rclpy signal handler, so Ctrl-C does NOT shut the ROS context down
-    # before cmd_go can send its cancel: with the default handler the context
-    # was already gone, the cancel could not be sent, and stopping the robot
-    # depended on someone cancelling from outside (2026-10-27).
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO); tool = Tool()
     try:
         rc = {'save': cmd_save, 'pick': cmd_pick, 'add': cmd_add, 'list': cmd_list,

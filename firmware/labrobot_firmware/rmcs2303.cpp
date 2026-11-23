@@ -15,8 +15,7 @@ inline uint8_t hexToNibble(char c) {
   return 0xFF;
 }
 
-// Parses two hex chars into a byte. Sets ok=false on any invalid character;
-// ok is never set back to true, so a single bad nibble poisons the whole frame.
+// Parses two hex chars into a byte.
 inline uint8_t hexByte(const char* p, bool& ok) {
   const uint8_t hi = hexToNibble(p[0]);
   const uint8_t lo = hexToNibble(p[1]);
@@ -58,9 +57,7 @@ void Rmcs2303::begin(HardwareSerial* port, uint8_t slave_addr) {
 }
 
 void Rmcs2303::sendFrame(uint8_t fc, uint8_t addr, uint16_t value) {
-  // Payload bytes the LRC is computed over: slave, function code, 16-bit
-  // address, 16-bit data. The RMCS-2303 uses an 8-bit address space, so the
-  // high address byte is always zero.
+  // Payload bytes the LRC is computed over: slave, function code, 16-bit address, 16-bit data.
   const uint8_t payload[6] = {
       slave_,
       fc,
@@ -87,8 +84,6 @@ void Rmcs2303::sendFrame(uint8_t fc, uint8_t addr, uint16_t value) {
   frame[n++] = '\r';
   frame[n++] = '\n';
 
-  // Drop anything stale still sitting in the receive buffer, so a late reply
-  // from a previous timed-out transaction cannot be mistaken for this one's.
   while (port_->available()) {
     port_->read();
   }
@@ -127,8 +122,6 @@ void Rmcs2303::poll() {
   while (port_->available()) {
     const char c = static_cast<char>(port_->read());
 
-    // Resynchronise on ':' - it can only start a frame, so seeing one mid-way
-    // means we lost bytes and should restart rather than parse garbage.
     if (c == ':') {
       rx_len_ = 0;
       rx_[rx_len_++] = c;
@@ -161,17 +154,11 @@ void Rmcs2303::poll() {
 }
 
 void Rmcs2303::parseFrame() {
-  // Snapshot the raw reply before any validation, so a rejected frame can
-  // still be dumped for diagnosis.
   last_frame_len_ = rx_len_ < kRxBufferSize ? rx_len_ : kRxBufferSize;
   memcpy(last_frame_, rx_, last_frame_len_);
   last_frame_[last_frame_len_] = '\0';
   memcpy(last_request_, pending_request_, sizeof(last_request_));
 
-  // Shortest valid reply is a single-register read:
-  //   ':' slave(2) fc(2) bytecount(2) data(4) lrc(2) = 13 chars, CR/LF stripped.
-  // A write echo is longer at 15. Using 15 as the floor here silently rejected
-  // every real read reply from the drive as "short".
   if (rx_len_ < 13 || rx_[0] != ':') {
     fail(ParseError::TOO_SHORT);
     return;
@@ -207,7 +194,6 @@ void Rmcs2303::parseFrame() {
   }
 
   // A reply from a different slave, or to a different function, is not ours.
-  // The drive also signals errors by setting the high bit of the function code.
   if (bytes[0] != slave_) {
     fail(ParseError::WRONG_SLAVE);
     return;
@@ -218,11 +204,8 @@ void Rmcs2303::parseFrame() {
   }
 
   if (expected_fc_ == 0x03) {
-    // ':' slave fc bytecount data... lrc
+    // ':' slave fc bytecount data...
     const uint8_t byte_count = bytes[2];
-    // A zero byte count means no payload: treat it as malformed rather than
-    // silently reporting a position of 0, which would look like a working
-    // encoder that never moves.
     if (byte_count == 0 || byte_count % 2 != 0 ||
         byte_count / 2 > kMaxResponseRegs || n_bytes < 3 + byte_count + 1) {
       fail(ParseError::BAD_COUNT);

@@ -3,67 +3,7 @@
 
     ros2 run labrobot_bringup auto_localise.py            # run once, then exit
     ros2 run labrobot_bringup auto_localise.py --turns 1  # give up sooner
-
-Started by scripts/bringup_nav.sh after Nav2 is active. Publishes, latched:
-    /labrobot/localised            std_msgs/Bool    true only on success
-    /labrobot/localisation_status  std_msgs/String  human-readable, for Foxglove
-nav_goal.py refuses to send goals unless /labrobot/localised is true.
-
-THE ROBOT SPINS AT EVERY STARTUP: leave ~0.35 m clear all round (circumscribed
-radius 0.29 m). The spin is one slow continuous turn using Nav2's Spin behaviour, which collision-checks each
-step against the local costmap and aborts rather than turning into something -
-but the camera faces forward only, so it cannot see what is beside the robot
-until it has turned towards it.
-
-Why a spin
-----------
-At startup RTAB-Map assumes the robot is where it last shut down. If it was
-moved while off, that pose is wrong, and RTAB-Map must recognise the room again.
-From one heading it often cannot (2026-10-13: a cluttered view of moved
-furniture gave 30 candidates, 23 with exactly 0/20 inliers). Turning shows it
-walls, shelving and other structure in every direction.
-
-When is it "localised" - two independent methods must agree
------------------------------------------------------------
-1. One slow 360 deg turn builds a depth ring; global_localise.match() searches
-   the whole map for where the room's SHAPE fits. The match must be distinct
-   (runner-up < 80%) and fit well (ring score >= 0.35).
-2. AND at least one RTAB-Map global loop closure - recognition by APPEARANCE -
-   must imply the same map->odom correction (0.3 m / 10 deg). Corrections, not
-   robot poses, are compared, so closures from earlier viewpoints still count
-   after the robot has moved.
-3. Otherwise (ambiguous, poor fit, no or disagreeing visual closure) the robot
-   drives --move metres towards the most open direction (forward only,
-   collision-checked) and looks again, up to --max-spots viewpoints; then it
-   reports NOT localised rather than guess.
-Why both: on 2026-10-15 a distinct geometric match, consistent across two
-viewpoints, was accepted alone and was WRONG - a same-shaped part of the lab.
-Both localisations the user verified had agreeing visual closures.
-Every attempt's ring, verdict and picture is kept in docs/logs/autoloc/.
-
-Operator-confirmed fallback (--accept-current)
-----------------------------------------------
     ros2 run labrobot_bringup auto_localise.py --accept-current --then-mapping --saved-below ID
-For when a PERSON has checked that the pose RTAB-Map shows matches the real
-robot, but the automatic rule could not accept it. No ring match, no driving,
-no thresholds lowered; it turns in place only until fresh views arrive: the person's confirmation replaces the geometric match, and two
-machine checks must still pass - at least --min-closures visual closures to the
-saved map agreeing with the current map->odom (0.3 m / 10 deg), and the
-single-view check (localisation_check) OK. 2026-10-31: after a kidnap the ring
-match was ambiguous at 3 spots (88-91%) and pointed at a corridor 5 m away,
-while 31 visual closures from many sessions agreed with each other, the view
-check passed, and the user confirmed that pose on the real robot.
-
-Why localisation mode first, then mapping (--then-mapping)
----------------------------------------------------------
-Tried 2026-10-13: running in SLAM mode from the start, RTAB-Map's best
-loop-closure hypothesis was always one of the CURRENT session's own nodes
-(hypothesis 0.93-0.98 to views taken minutes earlier in the same spin), so
-the saved map's places were never even tested and the new session stayed
-disconnected - it had to be discarded. In localisation mode only the saved map
-competes. So: localise against the saved map first, then switch RTAB-Map to
-mapping mode (/rtabmap/set_mode_mapping), and the map updates during navigation
-already joined to the saved one.
 """
 import argparse
 import math
@@ -186,14 +126,7 @@ class AutoLocalise(Node):
         return r.result().status == GoalStatus.STATUS_SUCCEEDED
 
     def spin_continuous(self, deg, allowance_s, stop_when):
-        """One slow continuous Spin of `deg`, cancelled as soon as stop_when()
-        is true. Returns 'stopped', 'succeeded' or 'aborted'.
-
-        Continuous rather than 45 deg steps (user observation 2026-10-14:
-        wheels slipped). Each step started and stopped the turn, and the starts
-        are where the drive wheels lose grip on this castor chassis. One ramp-up
-        and a steady 0.15 rad/s sweep also gives RTAB-Map (1 Hz) a view every
-        ~9 deg instead of a few widely spaced still frames."""
+        """One slow continuous Spin of `deg`, cancelled as soon as stop_when() is true."""
         g = Spin.Goal(); g.target_yaw = math.radians(deg)
         g.time_allowance = Duration(sec=int(allowance_s))
         fb = {'deg': 0.0}
@@ -235,15 +168,12 @@ class AutoLocalise(Node):
         return self.run_action(self.spin_client, g)
 
     def drive_forward(self, metres, speed=0.05):
-        # Forward only: the camera faces forward, so it sees where it drives,
-        # and the behaviour server collision-checks every step.
         g = DriveOnHeading.Goal(); g.target.x = float(metres); g.speed = float(speed)
         g.time_allowance = Duration(sec=int(metres / speed) + 20)
         return self.run_action(self.drive_client, g)
 
     def hint(self, x, y, yaw):
-        """Give RTAB-Map the geometric pose (the standard "2D Pose Estimate").
-        Replaces its stale startup pose and clears its odometry cache."""
+        """Give RTAB-Map the geometric pose (the standard "2D Pose Estimate")."""
         m = PoseWithCovarianceStamped()
         m.header.frame_id = 'map'; m.header.stamp = self.get_clock().now().to_msg()
         m.pose.pose.position.x, m.pose.pose.position.y = float(x), float(y)
@@ -259,8 +189,7 @@ class AutoLocalise(Node):
         return p.x, p.y, yaw_of(tf.transform.rotation)
 
     def set_rtabmap_param(self, name, value):
-        """Set an RTAB-Map parameter on the running node and apply it.
-        RTAB-Map parameters are declared as STRINGS on the ROS side."""
+        """Set an RTAB-Map parameter on the running node and apply it."""
         cli = self.create_client(SetParameters, '/rtabmap/set_parameters')
         if not cli.wait_for_service(timeout_sec=10.0):
             return False
@@ -294,21 +223,7 @@ class AutoLocalise(Node):
                 for i, p in zip(g.poses_id, g.poses) if 0 < i < saved_below}
 
     def join_saved_map(self, robot_pose, saved_below):
-        """Switch to mapping AND keep the saved map's frame.
-
-        Switching RTAB-Map from localisation to mapping does NOT carry the
-        localisation over: it starts a new, disconnected session with its own
-        origin. Seen 2026-10-14 - map->odom jumped from (5.65, 0.70, 90 deg) to
-        (-0.13, -0.14, -6 deg), every waypoint (saved in the old frame) was
-        then in the wrong place and the whole mission failed; the new session
-        only joins the old map on a later strong visual closure (it got 16/20
-        and 13/20 inliers, not enough).
-
-        So the robot's known pose is written into the graph explicitly: a user
-        loop closure (Link type kUserClosure = 4) from the new session's first
-        node to the nearest saved node, transform = new^-1 * saved (RTAB-Map's
-        convention: pose_to = pose_from * transform). Verified afterwards: the
-        robot's map pose must not have moved."""
+        """Switch to mapping AND keep the saved map's frame."""
         nodes = self.saved_node_poses(saved_below)
         if not nodes:
             return False, 'could not read the saved map graph'
@@ -379,8 +294,6 @@ def same_correction(c1, c2):
 
 
 def most_open_bearing(ring, half_width=0.30, step_deg=10):
-    """Bearing (rad, robot frame) with the longest clear corridor of robot
-    width, from the ring the spin just produced. Returns (bearing, clear_m)."""
     best = (0.0, 0.0)
     for b in np.radians(np.arange(-180, 180, step_deg)):
         c, s = math.cos(b), math.sin(b)
@@ -394,9 +307,7 @@ def most_open_bearing(ring, half_width=0.30, step_deg=10):
 
 
 def save_attempt(args, spot, ring, out, grid):
-    """Keep every attempt's ring and verdict for post-mortems (docs/logs/autoloc/).
-    The wrong localisation of 2026-10-15 could not be analysed afterwards
-    because nothing but the final picture was kept."""
+    """Keep every attempt's ring and verdict for post-mortems (docs/logs/autoloc/)."""
     import json
     d = os.path.join(os.path.dirname(args.match_png) or '.', 'autoloc')
     os.makedirs(d, exist_ok=True)
@@ -457,15 +368,8 @@ def main():
                          'status survives - latched messages vanish with their publisher.')
     args, _ = ap.parse_known_args(rclpy.utilities.remove_ros_args(sys.argv)[1:])
 
-    # No rclpy signal handler: by default Ctrl-C shuts the ROS context down
-    # BEFORE Python unwinds, so run()'s `finally` could not reach RTAB-Map to
-    # restore Vis/MinInliers (it failed with "context is invalid" on
-    # 2026-10-14, leaving RTAB-Map on the lowered value). Without the handler,
-    # Ctrl-C is a plain KeyboardInterrupt and the restore still runs.
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO); n = AutoLocalise()
-    # SIGTERM behaves like Ctrl-C. A run that failed earlier stayed alive and
-    # ignored SIGINT (2026-10-14), leaving a stale latched "localised: false"
-    # alongside the new run's "true" - listeners got whichever came last.
+    # SIGTERM behaves like Ctrl-C.
     def _interrupt(*_):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, _interrupt)
@@ -474,9 +378,7 @@ def main():
     except KeyboardInterrupt:
         rc = 130
     if not args.once and rc != 130:
-        # Staying up only keeps the latched status alive. Drop the inputs:
-        # the TF listener alone deserialised every /tf message (~87/s) in
-        # Python for hours - ~30% of a core (measured 2026-11-11, M6).
+        # Staying up only keeps the latched status alive.
         n.tf_listener.unregister()
         n.destroy_subscription(n.info_sub)
         try:
@@ -509,8 +411,7 @@ def run(n, args):
 
 
 def _run(n, args):
-    """Geometry first (works when the robot was kidnapped and the room has
-    changed), RTAB-Map second. See global_localise.py for the matcher."""
+    """Geometry first (works when the robot was kidnapped and the room has changed), RTAB-Map second."""
     n.status(False, 'starting: waiting for RTAB-Map, the map and the Spin behaviour')
     if not n.spin_client.wait_for_server(timeout_sec=60):
         n.status(False, 'Nav2 Spin behaviour not available - is navigation running?'); return 1
@@ -525,10 +426,7 @@ def _run(n, args):
     n.spin_for(2.0)
 
     def correction_for(pose):
-        """map->odom implied by a robot pose in the map, using odom->base NOW.
-        Two estimates taken at different moments are compared through this:
-        the correction stays constant while odometry holds, whereas the robot
-        pose changes every time the robot moves."""
+        """map->odom implied by a robot pose in the map, using odom->base NOW."""
         ob = n.buf.lookup_transform('odom', 'base_footprint', rclpy.time.Time())
         ox, oy = ob.transform.translation.x, ob.transform.translation.y
         oth = yaw_of(ob.transform.rotation)
@@ -540,9 +438,6 @@ def _run(n, args):
     for spot in range(args.max_spots):
         col.pts, col.last_yaw, col.turned, col.frames = [], None, 0.0, 0
         n.status(False, f'spot {spot + 1}/{args.max_spots}: turning 360 deg to see the room')
-        # Generous allowance: the robot can turn far slower than commanded -
-        # 0.045 rad/s against 0.15 at one spot on 2026-10-14 (wheel slip) - and
-        # a slow, steady turn still builds a valid ring.
         n.spin_continuous(360.0, 240, lambda _d: False)
         n.spin_for(1.0)
         if math.degrees(col.turned) < args.min_turn:
@@ -563,13 +458,6 @@ def _run(n, args):
                   f'yaw={math.degrees(th):+.0f}, runner-up {out["ratio"]:.0%} '
                   f'({"distinct" if out["ok"] else "ambiguous"}), ring score {out["score"]:.2f}; '
                   f'visual closures {len(agree)}/{len(vis)} agree', flush=True)
-            # ACCEPT ONLY WHEN TWO INDEPENDENT METHODS AGREE: the room's shape
-            # (distinct, well-fitting geometric match) AND its appearance (at
-            # least one RTAB-Map global closure implying the same correction).
-            # Geometry alone was accepted on 2026-10-15 and was WRONG: it matched
-            # a same-shaped part of the lab, consistently, from two viewpoints
-            # - consistency between viewpoints cannot catch that. Both verified
-            # localisations (kidnap 1 and 2) had agreeing visual closures.
             if out['ok'] and out['score'] >= args.min_ring_score and agree:
                 accepted = (out, ring, len(agree), len(vis)); break
             if not out['ok']:
@@ -589,11 +477,6 @@ def _run(n, args):
                   f'({math.degrees(b):+.0f} deg, {clear:.1f} m clear) - ROBOT DRIVES', flush=True)
             if not (n.turn_by(b) and n.drive_forward(args.move)):
                 n.status(False, 'could not reach the next viewpoint (blocked)'); return 1
-            # Obstacles marked from the previous spot can outlive what they
-            # were: 2026-10-31 the spot-2 Spin aborted "Collision Ahead" on
-            # lethal cells 26-33 cm ahead while the camera saw nothing within
-            # 0.8 m; clearing fixed it. The spin re-marks real obstacles as it
-            # turns towards them.
             n.clear_costmaps(local_only=True)
             n.spin_for(1.0)
 
@@ -627,11 +510,6 @@ def _run(n, args):
 
 
 def accept_current(n, args):
-    """Operator-confirmed: accept RTAB-Map's current pose if appearance and the
-    current view both support it. See the module docstring."""
-    # RTAB-Map adds no new views while the robot stands still (0 closures in
-    # 60 s, 2026-10-31), so turn slowly - the same collision-checked Spin as
-    # the automatic path - only until enough agreeing closures have arrived.
     n.status(False, 'operator-confirmed pose: turning slowly for fresh views of the saved map')
     n.clear_costmaps(local_only=True)        # stale obstacles block the turn (see _run)
     n.spin_for(2.0)
@@ -663,8 +541,6 @@ def accept_current(n, args):
 
 
 def go_live(n, args, x, y, th, how):
-    """After a pose is accepted: clear costmaps, map strictly, and (with
-    --then-mapping) join the saved map; then publish localised."""
     n.clear_costmaps()
     n.set_rtabmap_param('Vis/MinInliers', args.map_min_inliers)    # strict before mapping
     mode = 'localisation (map frozen)'

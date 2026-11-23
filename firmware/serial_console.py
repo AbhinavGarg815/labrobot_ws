@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Non-interactive serial console for the labrobot Mega bench firmware.
 
-Uses termios directly so it works over SSH and from non-interactive shells,
-where `stty` on a tty raises SIGTTOU. No pyserial dependency.
-
     firmware/serial_console.py --seconds 8
     firmware/serial_console.py --send f --seconds 5
     firmware/serial_console.py --send 'h' --send 'f' --delay 3 --send 's'
@@ -31,8 +28,7 @@ def open_port(path, baud, reset):
     lflag = 0
     cflag = termios.CS8 | termios.CREAD | termios.CLOCAL
     if not reset:
-        # HUPCL drops DTR on close, which resets the Mega. Clearing it lets us
-        # attach to already-running firmware without restarting it.
+        # HUPCL drops DTR on close, which resets the Mega.
         cflag &= ~termios.HUPCL
     cc = list(cc)
     cc[termios.VMIN] = 0

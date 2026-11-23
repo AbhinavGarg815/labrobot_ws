@@ -1,9 +1,3 @@
-// Host-side tests for the Jetson link layer: command handling, unit
-// conversion, status publication and the comms watchdog.
-//
-// The watchdog is the reason this file exists. It is the only thing that stops
-// the robot when the Jetson dies, and the robot has no kill switch, so it is
-// tested here against a simulated drive rather than trusted to bench luck.
 
 #include "../labrobot_firmware/host_link.h"
 
@@ -116,8 +110,6 @@ struct Rig {
 int main() {
   std::printf("HostLink tests\n");
 
-  // --- Unit conversion ------------------------------------------------------
-  // 60 wheel-rpm = 6283 mrad/s must map exactly onto 14460 base-motor rpm.
   {
     Rig rig;
     expectEqI("full scale +6283 mrad/s -> base rpm",
@@ -138,7 +130,7 @@ int main() {
                rig.link.countsPerSecToMradS(-2088.7f), -1047, 5);
   }
 
-  // --- A velocity command reaches the drives -------------------------------
+  // A velocity command reaches the drives
   {
     Rig rig;
     rig.run(60);  // let one-time drive setup finish
@@ -157,7 +149,7 @@ int main() {
     expectTrue("no frame errors", rig.link.frameErrors() == 0);
   }
 
-  // --- Status is published, and carries encoder state ----------------------
+  // Status is published, and carries encoder state
   {
     Rig rig;
     rig.ldrive.setPosition(12532);   // exactly one wheel revolution
@@ -183,7 +175,7 @@ int main() {
     }
   }
 
-  // --- WATCHDOG: silence brakes the robot ----------------------------------
+  // WATCHDOG: silence brakes the robot
   {
     Rig rig;
     rig.run(60);
@@ -211,7 +203,7 @@ int main() {
                !st.empty() && (st.back().flags & proto::kFlagWatchdogTrip));
   }
 
-  // --- Watchdog is refreshed by a steady command stream --------------------
+  // Watchdog is refreshed by a steady command stream
   {
     Rig rig;
     rig.run(60);
@@ -222,7 +214,7 @@ int main() {
     expectTrue("steady commands keep the watchdog clear", !rig.link.watchdogTripped());
   }
 
-  // --- Watchdog recovers when commands resume ------------------------------
+  // Watchdog recovers when commands resume
   {
     Rig rig;
     rig.run(60);
@@ -234,16 +226,13 @@ int main() {
     expectTrue("clears once commands resume", !rig.link.watchdogTripped());
   }
 
-  // --- Watchdog does NOT fire before the host has ever spoken --------------
-  // A board powered up with no Jetson should sit quietly braked, not report a
-  // fault that would mask a real one later.
   {
     Rig rig;
     rig.run(2000);
     expectTrue("no spurious trip before first command", !rig.link.watchdogTripped());
   }
 
-  // --- E-stop --------------------------------------------------------------
+  // E-stop
   {
     Rig rig;
     rig.run(60);
@@ -257,7 +246,7 @@ int main() {
                !st.empty() && (st.back().flags & proto::kFlagEstopped));
   }
 
-  // --- Ping / pong ----------------------------------------------------------
+  // Ping / pong
   {
     Rig rig;
     rig.run(30);
@@ -266,7 +255,7 @@ int main() {
     expectTrue("ping answered with pong", rig.sawType(proto::kMsgPong));
   }
 
-  // --- Corrupt frames are ignored, and do not disturb the drives -----------
+  // Corrupt frames are ignored, and do not disturb the drives
   {
     Rig rig;
     rig.run(60);
@@ -291,9 +280,6 @@ int main() {
     expectTrue("frame error counted", rig.link.frameErrors() >= 1);
   }
 
-  // --- A truncated frame must not block the next one -----------------------
-  // The inter-byte gap reset is what makes this work; without it the stump
-  // would swallow the following frame's header.
   {
     Rig rig;
     rig.run(60);
@@ -313,12 +299,6 @@ int main() {
     expectTrue("frame after a truncation is still applied", applied);
   }
 
-  // --- REGRESSION: clock advancing INSIDE poll() must not trip the watchdog -
-  // On real hardware millis() moves on while poll() is running, so a timestamp
-  // taken deeper in the call chain can be AHEAD of the one the loop sampled.
-  // The unsigned difference then wraps to ~4.29e9 and the watchdog fires on the
-  // very command that should have cleared it. With a clock that only ticked
-  // between iterations, every test above passed while the robot refused to move.
   {
     g_millis_auto_advance = true;
     Rig rig;

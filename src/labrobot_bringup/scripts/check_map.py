@@ -1,31 +1,8 @@
 #!/usr/bin/env python3
-"""Is the map any good? Occupancy grid, loop closure and drift correction.
+"""Is the map any good?
 
     ros2 run labrobot_bringup check_map.py             # 15 s sample
     ros2 run labrobot_bringup check_map.py --seconds 40
-
-Two traps this exists to avoid
-------------------------------
-1. RTAB-Map builds the occupancy grid ONLY while something is subscribed to
-   /map. A tool that connects, reads one message and disconnects gets the
-   TRANSIENT_LOCAL latched grid from before it arrived - so a map that grew from
-   1832 to 4646 free cells during a manoeuvre reads as completely unchanged.
-   This holds the subscription open and reports the LAST grid received.
-
-2. Loop closure is not in the node's log output. Grepping the log for "loop
-   closure" finds nothing and looks like failure, while /info was reporting
-   loopClosureId=1 at hypothesis 0.956 the whole time. Ask the topic.
-
-What the numbers mean
----------------------
-  loopClosureId != 0      a place was recognised; the id is the node matched.
-  hypothesis value        confidence. RTAB-Map's default accept threshold is
-                          0.11, so 0.9+ is emphatic rather than marginal.
-  map->odom correction    how far loop closure had to shove the map to make it
-                          consistent. Small is good: it means odometry was
-                          already nearly right. Large means either bad odometry
-                          or - worse - a false loop closure, which folds the map
-                          in half and is not recoverable.
 """
 
 import argparse
@@ -70,10 +47,7 @@ def main():
 
     node.create_subscription(OccupancyGrid, args.map_topic, on_map, map_qos)
 
-    # Loop closures must be COUNTED over the window, not sampled. loop_closure_id
-    # is non-zero only on the single iteration a closure is accepted, so reading
-    # it once almost always returns 0 - which reads as "loop closure never
-    # works" on a system where it is firing regularly.
+    # Loop closures must be COUNTED over the window, not sampled.
     state['closures'] = []
     state['max_hyp'] = 0.0
 

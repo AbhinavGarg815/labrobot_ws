@@ -4,8 +4,7 @@ namespace labrobot {
 namespace protocol {
 namespace {
 
-// Little-endian writers. Explicit byte-at-a-time rather than a struct memcpy,
-// because this wire crosses an 8-bit AVR and an aarch64 host.
+// Little-endian writers.
 inline void put16(uint8_t* p, uint16_t v) {
   p[0] = static_cast<uint8_t>(v & 0xFF);
   p[1] = static_cast<uint8_t>(v >> 8);
@@ -27,7 +26,7 @@ inline uint32_t get32(const uint8_t* p) {
          (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
 }
 
-// Payload length each type must carry. Returns false for unknown types.
+// Payload length each type must carry.
 bool requiredPayloadLen(uint8_t type, uint8_t* len) {
   switch (type) {
     case kCmdVelocity:  *len = kVelocityPayloadLen; return true;
@@ -44,8 +43,6 @@ bool requiredPayloadLen(uint8_t type, uint8_t* len) {
 }  // namespace
 
 // CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF, no reflection, no final xor.
-// Bitwise rather than table-driven: 256 entries of PROGMEM would cost more than
-// the handful of microseconds this takes on the frames we send.
 uint16_t crc16(const uint8_t* data, size_t len) {
   uint16_t crc = 0xFFFF;
   for (size_t i = 0; i < len; ++i) {
@@ -81,8 +78,6 @@ size_t encodeFrame(uint8_t type, const uint8_t* payload, uint8_t payload_len,
   out[3] = type;
   for (uint8_t i = 0; i < payload_len; ++i) out[4 + i] = payload[i];
 
-  // CRC covers LEN, TYPE and payload - not the sync bytes, which are a framing
-  // marker rather than content.
   const uint16_t crc = crc16(&out[2], static_cast<size_t>(payload_len) + 2);
   put16(&out[4 + payload_len], crc);
   return total;
@@ -158,9 +153,7 @@ bool FrameParser::finish() {
     return false;
   }
 
-  // Only accept a length that is right for THIS type. Accepting any length the
-  // buffer can hold is how a decoder ends up reading a shorter message as if it
-  // were a longer one.
+  // Only accept a length that is right for THIS type.
   uint8_t required = 0;
   if (!requiredPayloadLen(type_, &required)) {
     ++errors_;

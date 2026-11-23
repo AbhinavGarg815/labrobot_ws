@@ -3,11 +3,6 @@
 
     python3 tools/image_bandwidth.py                       # colour, 8 s
     python3 tools/image_bandwidth.py --topic <t> --seconds 15
-
-Exists because remote viewing over WiFi is sized by kB/frame x fps, and the
-obvious way to change that - `ros2 param set ... jpeg_quality` - reads back the
-new value and changes nothing (compressed_image_transport caches it when the
-publisher is built). Measure the bytes, never trust the parameter.
 """
 import argparse, sys, time
 import rclpy

@@ -1,18 +1,10 @@
 <?xml version="1.0"?>
-<!--
-  ros2_control description for the labrobot drivetrain.
-
-  One macro, two hardware plugins: the Gazebo system when running in
-  simulation, and our RMCS-2303 serial bridge when running on the robot. Joint
-  names, interfaces and limits are identical in both cases, so the same
-  diff_drive_controller configuration drives either target.
--->
+<!-- ros2_control description for the labrobot drivetrain. -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <xacro:macro name="labrobot_ros2_control" params="use_sim mcu_port mcu_baud">
 
-    <!-- Wheel velocity ceiling in rad/s, from the 60 rpm mechanical limit.
-         60 rpm = 1 rev/s = 2*pi rad/s. -->
+    <!-- Wheel velocity ceiling in rad/s, from the 60 rpm mechanical limit. -->
     <xacro:property name="max_wheel_rad_s" value="${max_wheel_rpm * 2.0 * pi / 60.0}"/>
 
     <ros2_control name="LabrobotSystem" type="system">
@@ -25,25 +17,19 @@
         <xacro:unless value="${use_sim}">
           <plugin>labrobot_hardware/RMCS2303SystemHardware</plugin>
 
-          <!-- Serial link to the Arduino Mega. The port is a udev symlink
-               pinned to the board's USB serial number so it never collides
-               with other CDC-ACM devices. -->
+          <!-- Serial link to the Arduino Mega. -->
           <param name="serial_port">${mcu_port}</param>
           <param name="baud_rate">${mcu_baud}</param>
           <param name="timeout_ms">100</param>
 
-          <!-- Encoder scaling. The firmware reports raw 32-bit counts; the
-               hardware interface converts to radians with these. -->
+          <!-- Encoder scaling. -->
           <param name="counts_per_wheel_rev">${encoder_counts_per_wheel_rev}</param>
           <param name="gear_ratio">${gear_ratio}</param>
 
-          <!-- Register 14 on the drive takes BASE-MOTOR rpm, not output rpm,
-               so the interface multiplies wheel rpm by the gear ratio before
-               sending. Commanding above this is refused. -->
+
           <param name="max_wheel_rpm">${max_wheel_rpm}</param>
 
-          <!-- Safety: if no command arrives within this window the firmware
-               brakes both motors. Must exceed the controller period. -->
+          <!-- Safety: if no command arrives within this window the firmware brakes both motors. -->
           <param name="command_timeout_ms">500</param>
         </xacro:unless>
       </hardware>

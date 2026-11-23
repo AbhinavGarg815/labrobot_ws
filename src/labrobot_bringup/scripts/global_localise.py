@@ -3,37 +3,6 @@
 
     ros2 run labrobot_bringup global_localise.py --spin      # turn 360, then match
     ros2 run labrobot_bringup global_localise.py             # match what is in view
-
-The kidnapped-robot problem, without markers
---------------------------------------------
-RTAB-Map relocalises by appearance. A week after mapping, with furniture moved
-and different light, 20 of 22 candidates came back with 0 inliers (2026-10-14).
-Walls, pillars, doorways and fixed benches do not move, and their SHAPE does not
-depend on lighting. So:
-
-1. During one slow 360 deg turn in place, stitch depth into a full ring of the
-   room's shape around the robot. The camera sees 87 deg at a time; over a
-   turn on the spot odometry is accurate (yaw comes from the gyro), so the views
-   join up. Only returns 0.10-0.90 m above the floor are kept - the same band
-   the occupancy map was built from.
-2. Correlative scan matching (Olson, "Real-time correlative scan matching",
-   ICRA 2009): for every heading (2 deg steps) the ring is rasterised and
-   cross-correlated with a likelihood field of the map's occupied cells by FFT,
-   which scores EVERY position at once. The map is ~12 x 11 m, so the whole
-   search takes about a second. Positions inside obstacles or unknown space
-   are excluded - the robot must be standing in mapped free space.
-3. Confidence is DISTINCTNESS, not score: the best pose must clearly beat the
-   best pose that is a genuinely different place (> 1 m or > 20 deg away). If
-   two places fit almost equally (symmetric room, too much has moved), the
-   answer is AMBIGUOUS and the caller should move to a new viewpoint and retry.
-
-The ring is reduced to a virtual 2D laser scan (nearest return per 0.5 deg
-bearing) and scored against obstacle SURFACES (occupied cells bordering free
-space) - see ring_in_robot_frame() and match() for why.
-
-Moved furniture appears as a minority of outliers; a full ring is dominated by
-walls and fixed structure, which is what makes this robust where appearance is
-not.
 """
 import argparse
 import math
@@ -63,7 +32,7 @@ DIFFERENT_PLACE_M = 1.0
 DIFFERENT_PLACE_DEG = 20.0
 MAX_RUNNER_UP = 0.80               # runner-up must score below 80% of the best
 FREE_WEIGHT = 2.0
-BEARING_BIN = 0.5                  # deg per virtual laser beam                  # penalty per ray sample landing on a mapped obstacle
+BEARING_BIN = 0.5
 
 
 def _rot(q):
@@ -130,11 +99,6 @@ class RingCollector:
         th = _yaw(tf.transform.rotation); c, s = math.cos(th), math.sin(th)
         dx, dy = P[:, 0] - x0, P[:, 1] - y0
         R = np.stack([c*dx + s*dy, -s*dx + c*dy], 1)
-        # A virtual 2D LASER SCAN: per 0.5 deg bearing keep only the NEAREST
-        # return - the surface the camera actually sees. Keeping every point
-        # (first version, 2026-10-14) smeared each wall into a radial band of
-        # range noise and of points behind the first surface, so whole regions
-        # matched and the answer was ambiguous.
         rng = np.hypot(R[:, 0], R[:, 1])
         bearing = np.floor((np.degrees(np.arctan2(R[:, 1], R[:, 0])) + 180.0) / BEARING_BIN).astype(int)
         order = np.lexsort((rng, bearing))           # by bearing, then range
@@ -155,18 +119,14 @@ def likelihood_field(occ, res):
 
 
 def match(ring, grid_msg):
-    """Score every (x, y, heading) in the map. Returns a dict with the best pose
-    (map frame), its score, and the best score at a genuinely different place."""
+    """Score every (x, y, heading) in the map."""
     res = grid_msg.info.resolution
     W, H = grid_msg.info.width, grid_msg.info.height
     ox, oy = grid_msg.info.origin.position.x, grid_msg.info.origin.position.y
     G = np.asarray(grid_msg.data, np.int16).reshape(H, W)
     occ = G >= 50
     free = G == 0
-    # Score against the obstacle SURFACES only - occupied cells that border
-    # free space. A camera never sees inside a block of furniture, and the
-    # map's furniture is mostly solid blocks: scoring against whole blocks made
-    # large areas look equally good.
+    # Score against the obstacle SURFACES only - occupied cells that border free space.
     from scipy.ndimage import binary_dilation
     surface = occ & binary_dilation(free, iterations=1)
     L = likelihood_field(surface, res)
@@ -191,17 +151,11 @@ def match(ring, grid_msg):
         c, s = math.cos(th), math.sin(th)
         Rx = c*ring[:, 0] - s*ring[:, 1]; Ry = s*ring[:, 0] + c*ring[:, 1]
         S = np.zeros((FH, FW), np.float32)
-        # Scan image indexed relative to the robot at (ext, ext) in a small patch,
-        # placed at the FFT origin so correlation peak index = robot cell.
         i = np.round(Rx / res).astype(int); j = np.round(Ry / res).astype(int)
         np.add.at(S, (j % FH, i % FW), 1.0)
         C = np.fft.irfft2(FL * np.conj(np.fft.rfft2(S)), s=(FH, FW))
         C = C[ext:ext+H, ext:ext+W] / n                   # C[r, c] = mean L at robot cell (r, c)
-        # Free-space term: each ray also says the space before its surface is
-        # EMPTY. Sample every ray at 30/55/80% of its length; any of those
-        # samples landing on a mapped obstacle is evidence against the pose.
-        # This is what separates a rotated/mirrored alias, which tends to put a
-        # mapped wall inside the ring, from the true pose.
+        # Free-space term: each ray also says the space before its surface is EMPTY.
         F = np.zeros((FH, FW), np.float32)
         for frac in (0.30, 0.55, 0.80):
             fi = np.round(frac * Rx / res).astype(int); fj = np.round(frac * Ry / res).astype(int)
@@ -214,8 +168,6 @@ def match(ring, grid_msg):
 
     order = sorted(range(len(best)), key=lambda a: -best[a][0])
     b = best[order[0]]
-    # Runner-up: the best score anywhere that is a DIFFERENT place - search all
-    # angles' score maps, masking out the neighbourhood of the winner.
     runner = -1.0; runner_pose = None
     rad = int(DIFFERENT_PLACE_M / res)
     for a in range(len(best)):

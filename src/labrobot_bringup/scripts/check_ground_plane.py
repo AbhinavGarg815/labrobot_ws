@@ -1,26 +1,7 @@
 #!/usr/bin/env python3
 """Verify the camera mount pose and depth quality from the floor itself.
 
-Park the robot on flat floor with clear ground ahead, then:
-
     ros2 run labrobot_bringup check_ground_plane.py
-
-Why the floor is the right instrument
--------------------------------------
-The camera mount pose (height and pitch) came from CAD and has never been
-checked against the real robot. Measuring it with a tape up a mast is awkward
-and imprecise. But if the URDF is right, the floor - which we know is flat and
-at z = 0 - must come back flat and at z = 0 when depth points are transformed
-into base_footprint. Any error in the mount pose tilts or shifts that plane by
-exactly the amount the mount is wrong.
-
-So one measurement answers three questions at once:
-  * is the depth data itself flat?          -> RMS residual about the fitted plane
-  * is the mount HEIGHT right?              -> plane offset from z = 0
-  * is the mount PITCH/ROLL right?          -> tilt of the plane normal
-
-A 1 deg pitch error puts a point at 2 m out by 35 mm, so this matters for
-mapping and for the Nav2 costmap.
 """
 
 import argparse
@@ -88,8 +69,6 @@ class GroundPlaneCheck(Node):
         fx, fy = info.k[0], info.k[4]
         cx, cy = info.k[2], info.k[5]
 
-        # Subsample: a full 848x480 grid is 400k points and adds nothing to a
-        # plane fit that only needs to be well-conditioned.
         step = self.args.step
         vs, us = np.mgrid[0:msg.height:step, 0:msg.width:step]
         zz = z[::step, ::step]
@@ -118,11 +97,7 @@ class GroundPlaneCheck(Node):
                       tf.transform.translation.z])
         pts = pts_optical @ R.T + t
 
-        # Pre-filter to points that could plausibly BE the floor. base_footprint
-        # is defined on the ground plane, so the floor is near z = 0 by
-        # construction. The window is generous (+/-0.35 m) so that a genuine
-        # mount error of several degrees does not exclude the far floor points
-        # that make the tilt measurable.
+        # Pre-filter to points that could plausibly BE the floor.
         plausible = (np.abs(pts[:, 2]) < 0.35) & (pts[:, 0] > 0.4)
         if plausible.sum() < 500:
             self.get_logger().error(
@@ -132,11 +107,7 @@ class GroundPlaneCheck(Node):
         return pts[plausible]
 
     def fit_plane(self, pts):
-        """RANSAC plane fit, then least-squares refit on the inliers.
-
-        Plain least squares would be dragged off the floor by walls, furniture
-        and the robot's own body, so the robust step is not optional here.
-        """
+        """RANSAC plane fit, then least-squares refit on the inliers."""
         rng = np.random.default_rng(0)
         best_inliers, best_n, best_d = None, None, None
         tol = self.args.inlier_tol
@@ -149,11 +120,7 @@ class GroundPlaneCheck(Node):
             if norm < 1e-9:
                 continue
             n = n / norm
-            # The floor's normal is near vertical. 0.95 is ~18 deg, comfortably
-            # more than any plausible mount error but tight enough that a wall,
-            # table or sloped object cannot win the vote. The original 0.8
-            # (~37 deg) let a wall through and produced a confident, completely
-            # wrong 29.6 deg "mount error".
+            # The floor's normal is near vertical.
             if abs(n[2]) < 0.95:
                 continue
             d = -n @ p0

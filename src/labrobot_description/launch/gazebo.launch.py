@@ -1,11 +1,5 @@
 # Bring up the labrobot in Gazebo Classic with ros2_control.
-#
-# Starts Gazebo, publishes the robot description, spawns the robot, and then
-# activates the controllers in order (joint_state_broadcaster first, then the
-# diff_drive_controller). Drive the robot with:
-#
 #   ros2 run teleop_twist_keyboard teleop_twist_keyboard \
-#       --ros-args -r /cmd_vel:=/diff_drive_controller/cmd_vel_unstamped
 
 import os
 import re
@@ -31,9 +25,6 @@ def generate_launch_description():
     pkg_share = get_package_share_directory(package_name)
 
     xacro_file = os.path.join(pkg_share, 'urdf', 'labrobot.urdf.xacro')
-    # gazebo_ros2_control 0.4.x re-publishes robot_description to the
-    # controller_manager as a node argument; rcl's argument parser rejects
-    # embedded newlines, so flatten the URDF to a single comment-free line.
     raw_urdf = xacro.process_file(xacro_file).toxml()
     raw_urdf = re.sub(r'<!--.*?-->', '', raw_urdf, flags=re.DOTALL)
     robot_description = ' '.join(raw_urdf.split())
@@ -106,8 +97,7 @@ def generate_launch_description():
         ],
     )
 
-    # Controller spawners. gazebo_ros2_control starts the controller_manager
-    # inside Gazebo, so these only need to load + activate the controllers.
+    # Controller spawners.
     joint_state_broadcaster_spawner = Node(
         package='controller_manager',
         executable='spawner',
@@ -122,11 +112,7 @@ def generate_launch_description():
         output='screen',
     )
 
-    # Static map -> odom transform (identity). The diff_drive_controller owns
-    # odom -> base_link; the ground-truth plugin reports poses in "map". This
-    # link joins both into one TF tree so RViz can overlay them under a single
-    # fixed frame. As wheel odometry drifts, odom slides away from map and the
-    # two trajectories visibly separate.
+    # Static map -> odom transform (identity).
     map_to_odom = Node(
         package='tf2_ros',
         executable='static_transform_publisher',

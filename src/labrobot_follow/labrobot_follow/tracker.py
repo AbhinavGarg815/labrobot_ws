@@ -1,33 +1,4 @@
-"""Multi-person tracking by detection, BoT-SORT style.
-
-What is taken from the literature, and what is changed for this robot:
-
-* ByteTrack (Zhang et al., ECCV 2022): two-stage association - confident
-  detections first, then the low-confidence leftovers against still-unmatched
-  tracks, which is what keeps a partly occluded person (low score) on their
-  track instead of starting a new one.
-* BoT-SORT (Aharon et al., 2022): Kalman state (cx, cy, w, h) + velocities,
-  noise proportional to box size, and the fused cost
-  min(IoU distance, appearance distance) with both gates.
-* Camera motion compensation: BoT-SORT estimates the camera's motion from
-  sparse optical flow on the image. Here the robot KNOWS its rotation (EKF +
-  TF), so the caller passes the homography H = K R K^-1 of the camera
-  rotation between frames and the predicted boxes are warped by it. Cheaper
-  and it does not fail on texture-poor views. Translation is ignored: at
-  0.26 m/s a person 1.5 m away shifts < 1 px per frame from it.
-
-* Depth gate (this robot has depth; BoT-SORT does not use it): a detection
-  may join a track only if its ground position (det['xy'], odom) is within
-  reach of the track's last 3D position: gate_base + gate_speed * dt +
-  gate_range_k * range^2 (depth noise grows with range squared). Found on
-  the first recording (people1, 97 s): a person walking in front of a seated
-  one took over the seated person's track - box overlap alone, range jumping
-  2.42 -> 1.57 m in one frame. Detections or tracks without 3D are not gated.
-
-Long-term identity (re-identification after the target was gone for
-seconds) is NOT the tracker's job; it lives in identity.py. The tracker keeps
-lost tracks for `track_buffer_s` so short occlusions do not change the id.
-"""
+"""Multi-person tracking by detection, BoT-SORT style."""
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -100,10 +71,7 @@ class BoxKalman:
 
 
 def warp_state(mean, cov, H):
-    """Apply an image homography (camera rotation) to a box track state.
-
-    Uses the local affine approximation of H at the box centre: the centre is
-    mapped exactly, sizes and velocities through the 2x2 Jacobian."""
+    """Apply an image homography (camera rotation) to a box track state."""
     cx, cy = mean[0], mean[1]
     p = H @ np.array([cx, cy, 1.0])
     nx, ny = p[0] / p[2], p[1] / p[2]
@@ -213,7 +181,7 @@ class PersonTracker:
         self.kf = BoxKalman()
         self.tracks = []
 
-    # -- cost -------------------------------------------------------------
+    # cost
     def _depth_gate(self, cost, tracks, dets, stamp):
         """Forbid (cost 1e5) pairs whose ground positions are out of reach."""
         for i, t in enumerate(tracks):
@@ -263,12 +231,8 @@ class PersonTracker:
         return (matches, [r for r in range(cost.shape[0]) if r not in mr],
                 [k for k in range(cost.shape[1]) if k not in mc])
 
-    # -- main step --------------------------------------------------------
+    # main step
     def update(self, dets, stamp, H=None):
-        """dets: list of dicts {box (xyxy), score, feat (unit vector or None),
-        clean (bool: not overlapping others - safe for appearance update), ...}.
-        stamp: seconds. H: 3x3 homography of the camera rotation since the
-        previous call, or None. Returns the list of TRACKED tracks."""
         for t in self.tracks:
             t.matched_this_frame = False
             t.predict()
@@ -281,7 +245,6 @@ class PersonTracker:
         confirmed = [t for t in self.tracks if t.confirmed]
         unconfirmed = [t for t in self.tracks if not t.confirmed]
 
-        # 1. confident detections vs all confirmed tracks (tracked + lost)
         matches, um_t, um_d = self._match(
             self._depth_gate(self._fused_cost(confirmed, high), confirmed, high, stamp),
             self.match_thresh)
@@ -290,7 +253,6 @@ class PersonTracker:
         rem_tracks = [confirmed[i] for i in um_t if confirmed[i].state == TRACKED]
         rem_high = [high[i] for i in um_d]
 
-        # 2. weak detections vs still-unmatched, currently tracked tracks; IoU only
         if rem_tracks and low:
             iou_d = self._depth_gate(
                 1.0 - iou_matrix([t.box for t in rem_tracks], [d['box'] for d in low]),
@@ -304,7 +266,6 @@ class PersonTracker:
         for t in unmatched_tracked:
             t.state = LOST
 
-        # 3. unconfirmed tracks vs remaining confident detections
         m3, um_u, um_d3 = self._match(
             self._depth_gate(self._fused_cost(unconfirmed, rem_high), unconfirmed, rem_high, stamp),
             self.unconfirmed_thresh)
@@ -314,12 +275,10 @@ class PersonTracker:
             unconfirmed[i].state = REMOVED
         rem_high = [rem_high[i] for i in um_d3]
 
-        # 4. births
         for d in rem_high:
             if d['score'] >= self.new_track_thresh:
                 self.tracks.append(Track(d, self.kf, stamp, self.feat_alpha))
 
-        # 5. deaths
         for t in self.tracks:
             if t.state == LOST and stamp - t.last_stamp > self.track_buffer_s:
                 t.state = REMOVED
@@ -337,7 +296,4 @@ class PersonTracker:
 
 
 def rotation_homography(K, R_cur_prev):
-    """Image homography of a pure camera rotation: x_cur ~ K R K^-1 x_prev,
-    where R_cur_prev maps vectors in the previous camera frame into the
-    current one (both optical frames)."""
     return K @ R_cur_prev @ np.linalg.inv(K)

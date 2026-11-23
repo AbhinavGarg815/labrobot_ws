@@ -1,23 +1,6 @@
 # Nav2 for labrobot (M4).
-#
 #   ros2 launch labrobot_bringup robot.launch.py localization:=true pointcloud:=true
 #   ros2 launch labrobot_bringup navigation.launch.py
-#
-# Requires a MAP and LOCALIZATION already running - Nav2 plans in the map frame
-# and will sit waiting forever without map -> odom.
-#
-# What provides what, because this is the part people wire up twice
-# -----------------------------------------------------------------
-#   map -> odom              RTAB-Map (mapping.launch.py localization:=true)
-#   odom -> base_footprint   the EKF (localization.launch.py)
-#   /map                     RTAB-Map's occupancy grid -> global costmap static layer
-#   obstacles                D435i point cloud -> voxel/obstacle layers
-#   /cmd_vel                 Nav2 -> velocity_smoother -> collision_monitor
-#                            -> diff_drive_controller (collision_monitor:=false
-#                            connects the smoother straight to the drive)
-#
-# AMCL is NOT used: it needs a LaserScan this robot does not have, and RTAB-Map
-# already publishes map -> odom from visual place recognition.
 
 import os
 
@@ -28,11 +11,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
-
 def _dds_profile():
-    """Fast DDS shared-memory segment big enough for clouds and raw images
-    (config/fastdds_shm.xml explains why). Every node launched after this
-    inherits it."""
     return SetEnvironmentVariable(
         'FASTRTPS_DEFAULT_PROFILES_FILE',
         os.path.join(get_package_share_directory('labrobot_bringup'), 'config', 'fastdds_shm.xml'))
@@ -56,13 +35,8 @@ def _nodes(context):
     params_file = LaunchConfiguration('params_file')
     autostart = LaunchConfiguration('autostart')
     use_cm = LaunchConfiguration('collision_monitor').perform(context).lower() in ('true', '1')
-    # Where the smoother's output goes: into the collision monitor, or (old
-    # wiring) straight to the drive.
     smoothed = '/cmd_vel_smoothed' if use_cm else '/diff_drive_controller/cmd_vel_unstamped'
 
-    # diff_drive_controller subscribes to cmd_vel_unstamped, so the smoother's
-    # output is remapped onto it. Nav2's controller writes /cmd_vel, the smoother
-    # reads that and writes /cmd_vel_smoothed - see the remap below.
     common = {'use_sim_time': False, 'autostart': autostart}
 
     nodes = [
@@ -71,20 +45,9 @@ def _nodes(context):
              remappings=[('cmd_vel', 'cmd_vel_nav')]),
         Node(package='nav2_planner', executable='planner_server',
              name='planner_server', output='screen', parameters=[params_file]),
-        # Same remap as the controller: recoveries (Spin, Wait) must go through
-        # the smoother to the drive like everything else. Without it the
-        # behaviour server published to /cmd_vel, which NOTHING subscribes to:
-        # every recovery Spin in every run up to 2026-10-13 commanded a dead
-        # topic and "failed" on its time allowance with the robot motionless.
         Node(package='nav2_behaviors', executable='behavior_server',
              name='behavior_server', output='screen', parameters=[params_file],
              remappings=[('cmd_vel', 'cmd_vel_nav')]),
-        # Custom tree: the stock one minus the BackUp recovery, which is a
-        # blind and (on this chassis) heavily rotating reverse. See the XML.
-        # Goals clicked in Foxglove arrive on /goal_pose in the 3D panel's
-        # display frame; in `odom` the planner lost them after ~10 s
-        # (2026-11-11). goal_relay converts each into `map` once and
-        # bt_navigator listens to its output instead - see goal_relay.py.
         Node(package='labrobot_bringup', executable='goal_relay.py',
              name='goal_relay', output='screen'),
         Node(package='nav2_bt_navigator', executable='bt_navigator',
@@ -99,19 +62,13 @@ def _nodes(context):
              name='velocity_smoother', output='screen', parameters=[params_file],
              remappings=[('cmd_vel', 'cmd_vel_nav'),
                          ('cmd_vel_smoothed', smoothed)]),
-        # Sequences NavigateToPose goals through a list of waypoints
-        # (FollowWaypoints action); used by scripts/waypoints.py.
         Node(package='nav2_waypoint_follower', executable='waypoint_follower',
              name='waypoint_follower', output='screen', parameters=[params_file]),
     ]
     # The lifecycle manager must list every managed node, in start order.
-    # A node missing here simply never activates, and the symptom is Nav2
-    # accepting a goal and then doing nothing at all.
     managed = ['controller_server', 'planner_server', 'behavior_server', 'bt_navigator',
                'waypoint_follower', 'velocity_smoother']
     if use_cm:
-        # Last word on every Nav2 command: stops for anything tall in a zone
-        # just ahead of the bumper (M6.T4; what it cannot see is in the YAML).
         nodes.append(Node(package='nav2_collision_monitor', executable='collision_monitor',
                           name='collision_monitor', output='screen',
                           parameters=[os.path.join(pkg, 'config', 'collision_monitor.yaml')]))

@@ -1,8 +1,4 @@
 // Host-side tests for the per-wheel RMCS-2303 sequencing.
-//
-// These run the real WheelDrive state machine against a simulated drive, so
-// ordering bugs (speed applied before direction, a failed write silently
-// treated as applied) surface here rather than as an unexpected motor movement.
 
 #include "../labrobot_firmware/wheel_drive.h"
 
@@ -35,8 +31,6 @@ static void expectEqI32(const char* what, int32_t got, int32_t want) {
   }
 }
 
-// Runs the firmware and the simulated drive together for a number of
-// transaction slots, advancing the fake clock a little each pass.
 static void run(WheelDrive& w, HardwareSerial& port, FakeDrive& drive, int iters) {
   for (int i = 0; i < iters; ++i) {
     w.poll();
@@ -61,7 +55,7 @@ static bool wroteValue(const FakeDrive& d, uint8_t addr, uint16_t value) {
 int main() {
   std::printf("WheelDrive state-machine tests\n");
 
-  // --- One-time initialisation ---------------------------------------------
+  // One-time initialisation
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -76,7 +70,7 @@ int main() {
                wroteValue(drive, labrobot::REG_ACCELERATION, 500));
   }
 
-  // --- Forward: direction must be written BEFORE magnitude -----------------
+  // Forward: direction must be written BEFORE magnitude
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -104,8 +98,6 @@ int main() {
                ctrl_idx >= 0 && speed_idx > ctrl_idx);
   }
 
-  // --- Reverse uses the CCW control bit and an UNSIGNED magnitude ----------
-  // Register 14 is unsigned; sending a negative would wrap to a huge speed.
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -128,7 +120,7 @@ int main() {
     expectTrue("never wrote a wrapped negative speed", !wrote_negative);
   }
 
-  // --- Zero brakes rather than coasting ------------------------------------
+  // Zero brakes rather than coasting
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -146,7 +138,7 @@ int main() {
     expectTrue("speed zeroed", wroteValue(drive, labrobot::REG_SPEED_CMD, 0));
   }
 
-  // --- Encoder feedback, forward and reverse -------------------------------
+  // Encoder feedback, forward and reverse
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -163,7 +155,7 @@ int main() {
     expectEqI32("reads negative position", w.positionCounts(), -98765);
   }
 
-  // --- E-stop --------------------------------------------------------------
+  // E-stop
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -178,7 +170,7 @@ int main() {
                wroteValue(drive, labrobot::REG_CONTROL, labrobot::CTRL_ESTOP));
   }
 
-  // --- A failed write must be retried, not assumed applied -----------------
+  // A failed write must be retried, not assumed applied
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -191,15 +183,14 @@ int main() {
     w.setTargetRpm(2410);
     run(w, port, drive, 60);
 
-    // Despite the corrupted acknowledgement, the drive must end up holding the
-    // commanded values.
+    // Despite the corrupted acknowledgement, the drive must end up holding the commanded values.
     expectTrue("control eventually applied after a bad reply",
                drive.registers[labrobot::REG_CONTROL] == labrobot::CTRL_ENABLE_CW);
     expectTrue("speed eventually applied after a bad reply",
                drive.registers[labrobot::REG_SPEED_CMD] == 2410);
   }
 
-  // --- Health tracking on a dead link --------------------------------------
+  // Health tracking on a dead link
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -208,8 +199,6 @@ int main() {
     initialise(w, port, drive);
     expectTrue("healthy while the drive answers", w.healthy());
 
-    // Each timeout takes 120 ms, and kFaultThreshold is 5, so declaring the
-    // link dead needs ~600 ms. Step well past that.
     drive.silent = true;
     for (int i = 0; i < 100; ++i) {
       w.poll();
@@ -220,19 +209,12 @@ int main() {
     expectTrue("at least kFaultThreshold timeouts occurred",
                w.timeouts() >= WheelDrive::kFaultThreshold);
 
-    // And it must recover once the drive answers again. The request already in
-    // flight still has to time out first, so allow more than 120 ms of the
-    // 1 ms-per-iteration clock before expecting health back.
+    // And it must recover once the drive answers again.
     drive.silent = false;
     run(w, port, drive, 300);
     expectTrue("recovers when the link returns", w.healthy());
   }
 
-  // --- Inversion flips command AND encoder sign together -------------------
-  // The two motors are mounted mirrored, so one side is inverted. If only the
-  // command were flipped, the wheel would drive the right way while odometry
-  // counted backwards - a fault that looks fine on the bench and corrupts the
-  // map later.
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -250,8 +232,6 @@ int main() {
     expectTrue("inverted: magnitude still unsigned 2410",
                wroteValue(drive, labrobot::REG_SPEED_CMD, 2410));
 
-    // The drive counts up in its own frame; we must report that as negative,
-    // because for this wheel "drive positive" is "robot backwards".
     drive.setPosition(5000);
     run(w, port, drive, 30);
     expectEqI32("inverted: encoder sign flipped", w.positionCounts(), -5000);
@@ -268,11 +248,6 @@ int main() {
     expectEqI32("non-inverted: encoder sign unchanged", w2.positionCounts(), 5000);
   }
 
-  // --- Position reads must not be starved by a fast command stream ---------
-  // Wheel velocity is differentiated from consecutive POSITION reads, and reads
-  // only get the spare transaction slots. A host commanding a new speed every
-  // cycle would otherwise crowd them out forever: the odometry goes stale while
-  // every transaction still succeeds, so nothing anywhere reports a fault.
   {
     HardwareSerial port;
     FakeDrive drive;
@@ -290,8 +265,7 @@ int main() {
 
     expectTrue("position still read despite a speed change every slot",
                drive.reads.size() > 0);
-    // kMaxWritesBetweenPos = 2, so the worst case is one read per three
-    // transactions. The old code produced ZERO here.
+    // kMaxWritesBetweenPos = 2, so the worst case is one read per three transactions.
     expectTrue("position read at least every few transactions",
                drive.reads.size() >= 5);
     expectTrue("speed commands still got through",

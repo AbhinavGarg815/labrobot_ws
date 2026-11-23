@@ -1,25 +1,11 @@
 #!/usr/bin/env bash
-#
 # Milestone 0 / Task 1+2 - one-time host provisioning for the labrobot Jetson.
-#
-# Installs the ROS 2 packages the robot stack needs, grants the login user
-# access to the Arduino Mega's serial port, and pins that port to a stable
-# device name so the ros2_control hardware interface never has to guess
-# between /dev/ttyACM0 and /dev/ttyACM1.
-#
-# Idempotent: safe to re-run. Run as root:
-#
-#     sudo bash /home/zine/ros2_ws/scripts/00_setup_jetson.sh
-#
+#   sudo bash /home/zine/ros2_ws/scripts/00_setup_jetson.sh
 set -euo pipefail
 
-# The user that will run the robot stack. Derived from sudo, so the script
-# grants dialout to the human who invoked it rather than to root.
+# The user that will run the robot stack.
 TARGET_USER="${SUDO_USER:-${USER}}"
 
-# Stable name for the Arduino Mega, matched on its burned-in USB serial number
-# (see `udevadm info -a -n /dev/ttyACM1`). Replacing the board means updating
-# MCU_USB_SERIAL below.
 MCU_USB_SERIAL="11427551267196908100"
 MCU_SYMLINK="labrobot_mcu"
 UDEV_RULE_FILE="/etc/udev/rules.d/99-labrobot.rules"
@@ -65,12 +51,6 @@ fi
 
 log "Target user: ${TARGET_USER}"
 
-# ---------------------------------------------------------------------------
-# 1. Serial port access.
-#
-# Ubuntu guards /dev/ttyACM* with group 'dialout'. Without membership the
-# hardware interface gets EACCES on open().
-# ---------------------------------------------------------------------------
 log "Granting '${TARGET_USER}' access to serial ports (dialout group)"
 if id -nG "${TARGET_USER}" | tr ' ' '\n' | grep -qx dialout; then
   echo "already a member of dialout - nothing to do"
@@ -79,13 +59,6 @@ else
   echo "added ${TARGET_USER} to dialout (takes effect on next login)"
 fi
 
-# ---------------------------------------------------------------------------
-# 2. Stable device name for the Arduino Mega.
-#
-# ACM numbering depends on enumeration order, and the USB-tethered phone also
-# claims an ACM node. Matching on the board's serial number makes
-# /dev/labrobot_mcu unambiguous.
-# ---------------------------------------------------------------------------
 log "Installing udev rule -> /dev/${MCU_SYMLINK}"
 cat > "${UDEV_RULE_FILE}" <<EOF
 # labrobot - Arduino Mega 2560 motor-control MCU.
@@ -100,12 +73,6 @@ udevadm control --reload-rules
 udevadm trigger --subsystem-match=tty
 echo "wrote ${UDEV_RULE_FILE}"
 
-# ---------------------------------------------------------------------------
-# 3. ROS 2 package installation.
-#
-# The ROS 2 apt repository is already configured on this host via the
-# 'ros2-apt-source' package (/etc/apt/sources.list.d/ros2.sources).
-# ---------------------------------------------------------------------------
 log "Updating apt indexes"
 apt-get update
 
@@ -113,9 +80,6 @@ log "Installing ROS 2 packages (~110 MiB download, 207 packages)"
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   "${ROS_PACKAGES[@]}"
 
-# ---------------------------------------------------------------------------
-# 4. rosdep - needed later to resolve dependencies of our own packages.
-# ---------------------------------------------------------------------------
 log "Initialising rosdep"
 if [[ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]]; then
   rosdep init

@@ -1,19 +1,9 @@
 #!/usr/bin/env bash
 # Localise the robot again while the stack is running (after bringup_nav.sh).
-#
-#     scripts/localise.sh                  # ROBOT TURNS: spin + scan match + visual check, as at startup
-#     scripts/localise.sh --confirm        # you checked the pose in Foxglove: accept it if visual
-#                                          #   matches agree and the camera-view check passes
-#     scripts/localise.sh --confirm-geometry   # you checked the pose, but no visual matches come
-#                                          #   in: accept on your check + the camera-view check
-#     scripts/localise.sh --dry-run ...    # print the command, do nothing
-#
-# Use it when the robot was moved by hand, when startup localisation ended
-# "NOT localised", or when a mission refuses with "current view does not match
-# the map". It finds the right map-node id and map mode from the running
-# bringup itself (docs/logs/bringup_status), and stops any earlier
-# auto_localise first - a finished one keeps publishing its old verdict.
-# Progress: tail -f the log it prints.
+#   scripts/localise.sh                  # ROBOT TURNS: spin + scan match + visual check, as at startup
+#   scripts/localise.sh --confirm        # you checked the pose in Foxglove: accept it if visual
+#   scripts/localise.sh --confirm-geometry   # you checked the pose, but no visual matches come
+#   scripts/localise.sh --dry-run ...    # print the command, do nothing
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -34,9 +24,7 @@ ROBOT_LOG=$(grep -oE "robot=[^ ]+" "$STATUS" | tail -1 | cut -d= -f2)
 [ -n "$ROBOT_LOG" ] && [ -f "$ROBOT_LOG" ] || { echo "bringup did not reach READY (see $STATUS)"; exit 1; }
 FIRST_ID=$(grep -m1 -oE "rtabmap \([0-9]+\):" "$ROBOT_LOG" | grep -oE "[0-9]+" || true)
 [ -n "$FIRST_ID" ] || { echo "cannot find RTAB-Map's first node id in $ROBOT_LOG"; exit 1; }
-# Same map mode as the running bringup (bringup_nav.sh writes mode=frozen or
-# mode=lifelong). If it is not recorded, stay FROZEN: re-localising must never
-# switch lifelong mapping on by accident.
+# Same map mode as the running bringup (bringup_nav.sh writes mode=frozen or mode=lifelong).
 THEN_MAPPING=""
 grep -q "mode=lifelong" "$STATUS" && THEN_MAPPING="--then-mapping"
 

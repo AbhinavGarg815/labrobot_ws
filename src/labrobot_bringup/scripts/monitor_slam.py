@@ -1,29 +1,7 @@
 #!/usr/bin/env python3
-"""Live SLAM quality while you teleop. Tells you when to re-drive an area.
+"""Live SLAM quality while you teleop.
 
     ros2 run labrobot_bringup monitor_slam.py
-
-Prints one line every few seconds so map problems are visible WHILE mapping,
-not after. The three things that ruin a map, and what to watch:
-
-  DRIFT      -> map->odom correction. This is how far loop closure has had to
-                shove the map to keep it consistent. Small and stable is healthy.
-                Growing steadily with no closures means drift is accumulating
-                unchecked - go back somewhere you have already mapped.
-
-  DISTORTION -> a single large jump in map->odom. That is a loop closure being
-                accepted that should not have been, and it folds the map. If you
-                see a jump of more than ~0.5 m, the map is probably damaged and
-                worth restarting.
-
-  FEATURES   -> visual words per frame. Loop closure works by recognising
-                appearance; a blank wall gives it nothing. Low counts mean the
-                robot is looking at something unmappable and will not close a
-                loop there however often you revisit.
-
-Node growth matters too: if nodes stop increasing while you are driving, RTAB-Map
-has stopped accepting frames (usually TF or sync trouble) and you are covering
-ground that is not being recorded.
 """
 
 import argparse
@@ -46,16 +24,7 @@ except ImportError:
 
 
 def stat(msg, key, default=None):
-    """Exact-key lookup. NO substituting a different statistic on a miss.
-
-    An earlier version fell back to `Memory/Local_graph_size` when the feature
-    count could not be found, and then fed that into the verdict logic - so a
-    stationary robot with 881 healthy features was reported as "FEW FEATURES -
-    blank scene". The key was simply misspelt (`Keypoint/Current_frame_words/`
-    instead of `Keypoint/Current_frame/words`). Returning the wrong number is
-    far worse than returning none, because the wrong number gets a verdict
-    attached to it.
-    """
+    """Exact-key lookup."""
     for i, k in enumerate(msg.stats_keys):
         if k == key:
             return msg.stats_values[i]

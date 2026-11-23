@@ -2,26 +2,6 @@
 """Is the robot moving in smooth arcs, or in straight/turn/straight segments?
 
     ros2 run labrobot_bringup analyse_motion.py --seconds 60
-
-Passive: run it alongside a Nav2 goal or any other motion.
-
-What it separates
------------------
-"The motion is jerky" has two completely different causes with different fixes,
-and they are indistinguishable by eye:
-
-  * THE COMMAND is segmented. Nav2 decides to rotate in place, then translate,
-    because its alignment critics reward pointing at the path more than making
-    progress along it. Fix: retune the controller.
-  * THE COMMAND is a smooth arc but the WHEELS do not follow it. A gentle curve
-    needs a small difference between left and right wheel speeds; if that
-    difference is lost to quantisation, deadband or drive lag, the robot can only
-    go straight or turn sharply. Fix: the drivetrain, not Nav2.
-
-So this reports the commanded twist and the achieved wheel speeds side by side.
-A "coordinated" sample is one where the robot is asked to translate AND rotate at
-the same time - that is what an arc is. A robot doing straight/turn/straight
-shows almost no coordinated samples at all.
 """
 
 import argparse
@@ -131,8 +111,7 @@ def main():
             print(f'    only ONE wheel turning  : {100*onew.sum()/na:5.1f}%   '
                   '<- one motor idle while the other drives')
         if same.sum() > 5:
-            # In an arc both wheels turn the same way at DIFFERENT speeds. If the
-            # ratio is pinned at 1.00 the drivetrain is only ever going straight.
+            # In an arc both wheels turn the same way at DIFFERENT speeds.
             ratio = np.abs(L[same]) / np.maximum(np.abs(R[same]), 1e-6)
             print(f'    L/R speed ratio while both drive: median {np.median(ratio):.3f}, '
                   f'5-95% {np.percentile(ratio,5):.3f}-{np.percentile(ratio,95):.3f}')

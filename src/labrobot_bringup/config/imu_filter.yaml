@@ -1,41 +1,20 @@
 # Madgwick orientation filter for the D435i IMU.
-#
-# The BMI085 publishes raw angular velocity and linear acceleration only - its
-# orientation field is all-zero with covariance -1, meaning "not provided". This
-# filter integrates the gyro and levels it against gravity to produce one.
-#
-# Who actually needs that orientation:
-#   * RTAB-Map, which can use a gravity direction to constrain roll and pitch and
-#     stop the map slowly tipping over on long runs.
-#   * NOT the EKF. See ekf.yaml - on a planar robot the EKF takes only the gyro's
-#     yaw RATE, because an absolute yaw from this filter would drift freely
-#     (there is no magnetometer to anchor it) and the EKF would be fusing its own
-#     integration error back in as if it were a measurement.
 
 imu_filter_madgwick:
   ros__parameters:
     # No magnetometer on the D435i, so yaw is unobservable in absolute terms.
-    # With this false the filter reports a yaw that starts at zero and drifts;
-    # only roll and pitch are meaningful, and only those get consumed.
     use_mag: false
 
     # ENU is the ROS convention (REP-103).
     world_frame: enu
 
-    # MUST stay false. The URDF plus the camera driver already own every frame
-    # between base_footprint and the IMU; a filter publishing its own would be a
-    # second, conflicting opinion about the same edge.
+    # The EKF owns odom -> base_footprint; never publish TF here.
     publish_tf: false
 
-    # How hard the accelerometer is allowed to pull the gyro back towards
-    # gravity. The default is 0.1; this is lower because our accelerometer is
-    # measurably biased - 27 mg, which by itself accounts for ~1.5 deg of
-    # apparent tilt - while the gyro is quiet at 0.1-0.14 deg/s of noise.
-    # Trusting the better sensor more is the whole point of the gain.
+    # How hard the accelerometer is allowed to pull the gyro back towards gravity.
     gain: 0.05
 
-    # Gyro bias is small but not zero (yaw bias 0.099 deg/s, which alone is
-    # 6 deg per minute). Let the filter estimate and remove it.
+    # Gyro bias is small but not zero (yaw bias 0.099 deg/s, which alone is 6 deg per minute).
     do_bias_estimation: true
     zeta: 0.02
 

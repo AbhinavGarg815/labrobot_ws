@@ -1,27 +1,7 @@
 #!/usr/bin/env python3
 """Characterise the D435i IMU, and cross-check the camera mount from gravity.
 
-Park the robot stationary on flat floor, then:
-
     ros2 run labrobot_bringup check_imu.py
-
-Two jobs.
-
-1. NOISE AND BIAS, which the EKF needs
-   A stationary gyro should read zero; whatever it reads is bias, and the EKF
-   must know it or that bias integrates straight into heading drift. The
-   standard deviations here are the honest inputs for the EKF covariances -
-   guessing them is how an EKF ends up trusting the wrong sensor.
-
-2. AN INDEPENDENT CHECK ON THE CAMERA MOUNT
-   A stationary accelerometer measures gravity, and gravity is vertical by
-   definition. Rotated into base_footprint with the URDF's mount pose, it must
-   come out as (0, 0, +9.81). Any tilt is mount error - measured by completely
-   different physics from the depth-based ground-plane fit.
-
-   That independence is the point. The ground-plane method could be fooled by a
-   sloping floor; the accelerometer cannot. If the two agree, the mount pose is
-   right for two unrelated reasons rather than one that might be systematic.
 """
 
 import argparse
@@ -120,7 +100,7 @@ def main():
         print(f'  linear_accel     : {np.max(asd)**2:.3e} (m/s^2)^2')
         print()
 
-        # --- the independent mount check ---------------------------------
+        # the independent mount check
         try:
             tf = node.tf_buffer.lookup_transform(
                 'base_footprint', node.frame_id, rclpy.time.Time())
@@ -130,8 +110,6 @@ def main():
 
         R = quat_to_matrix(tf.transform.rotation)
         g_base = R @ am
-        # Gravity is vertical by definition, so any horizontal component is
-        # the mount pose being wrong.
         horiz = math.hypot(g_base[0], g_base[1])
         tilt = math.degrees(math.atan2(horiz, abs(g_base[2])))
         pitch_err = math.degrees(math.atan2(-g_base[0], abs(g_base[2])))

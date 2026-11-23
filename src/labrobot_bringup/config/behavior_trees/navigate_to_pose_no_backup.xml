@@ -1,17 +1,4 @@
-<!--
-  Nav2's stock navigate_to_pose_w_replanning_and_recovery.xml (Humble) with ONE
-  change: the BackUp recovery is removed.
 
-  Why: labrobot has no rear sensor (the only camera faces forward), so any
-  reverse is blind. Worse, reversing on this chassis is not straight - all four
-  castors flip through 180 deg and a commanded straight 0.20 m reverse at
-  0.05 m/s rotated the robot ~95 deg (odometry, displacement and gyro agree).
-  The stock tree's BackUp 0.30 m would drive blind AND sideways.
-
-  The remaining recoveries are all safe in place: clear costmaps, Spin (an
-  in-place rotation, which this robot does accurately - 179.8 deg for 180
-  commanded) and Wait.
--->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="6" name="NavigateRecovery">
@@ -23,10 +10,7 @@
           </RecoveryNode>
         </RateController>
         <RecoveryNode number_of_retries="1" name="FollowPath">
-          <!-- goal_checker_id is REQUIRED since a second checker exists
-               (follow_goal_checker, person following): with two, Humble's
-               controller rejects an empty id and every goal aborted at once
-               (2026-11-12 regression drive). -->
+          
           <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="general_goal_checker"/>
           <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>

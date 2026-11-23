@@ -1,21 +1,4 @@
 // Measure D435i link health straight from librealsense, with no ROS in the path.
-//
-// Built and run by scripts/soak_test_camera.sh; standalone usage:
-//     ./rs_link_probe [seconds] [with_colour 0|1]
-//
-// Why this exists rather than just watching the ROS topics
-// -------------------------------------------------------
-// The first version of the soak test judged the USB cable by the frame rate on
-// /camera/camera/depth/image_rect_raw. That number turned out to vary between
-// 25.9 and 29.5 fps across identical runs on identical hardware, because it is
-// a property of the ROS node, DDS and Jetson scheduling - three layers below
-// which the actual link sits. Judging a cable by it produced a confident FAIL on
-// a link that was, measured properly, delivering every single frame.
-//
-// This probe asks the camera directly, and counts drops from the FRAME NUMBER
-// rather than inferring them from arrival times. A frame the camera captured but
-// the link lost leaves a hole in the sequence; nothing downstream can hide it and
-// no amount of host CPU load can fake it.
 
 #include <librealsense2/rs.hpp>
 
@@ -36,8 +19,7 @@ struct StreamStats {
     last = num;
     ++received;
   }
-  // Frame numbers are contiguous, so the count the camera believes it sent is
-  // simply the span. Anything missing from it was lost on the way.
+  // Frame numbers are contiguous, so the count the camera believes it sent is simply the span.
   long long expected() const {
     return (first < 0 || last < first) ? 0 : (last - first + 1);
   }
@@ -55,8 +37,6 @@ int main(int argc, char** argv) {
   const bool with_color = (argc > 2) ? (std::string(argv[2]) == "1") : true;
   const int fps = (argc > 3) ? std::atoi(argv[3]) : 30;
 
-  // Match the profiles in camera.launch.py: measuring a lighter configuration
-  // than the robot actually runs would not test the bandwidth it actually needs.
   rs2::config cfg;
   cfg.enable_stream(RS2_STREAM_DEPTH, 848, 480, RS2_FORMAT_Z16, fps);
   if (with_color) {
@@ -135,8 +115,6 @@ int main(int argc, char** argv) {
   std::printf("  worst capture gap %.1f ms   stalls %d   frameset timeouts %d\n",
               worst_gap, stalls, timeouts);
 
-  // A tiny drop rate is normal on any USB camera; a bad cable produces percent-
-  // level loss and re-enumerations, not a stray frame.
   const bool ok = depth.drop_pct() < 0.5 && (!with_color || color.drop_pct() < 0.5) &&
                   stalls == 0 && timeouts == 0 && depth.received > 10;
   std::printf("  LINK: %s\n", ok ? "clean" : "DEGRADED");

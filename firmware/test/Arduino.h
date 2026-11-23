@@ -1,7 +1,4 @@
-// Minimal Arduino shim so the RMCS-2303 driver can be compiled and exercised
-// on the host. This exists purely for firmware/test/test_rmcs2303.cpp - it lets
-// us prove the LRC arithmetic and frame parser are correct before any of it
-// touches a real drive, where a malformed frame means an unexpected motor move.
+// Minimal Arduino shim so the RMCS-2303 driver can be compiled and exercised on the host.
 
 #ifndef LABROBOT_TEST_ARDUINO_H
 #define LABROBOT_TEST_ARDUINO_H
@@ -14,10 +11,7 @@
 // Test-controlled clock so timeout behaviour is deterministic.
 extern uint32_t g_fake_millis;
 
-// When set, every millis() call advances the clock by 1 ms. Real time passes
-// inside a poll() too, and code that samples millis() more than once per pass
-// can then compare timestamps taken at different instants. A clock that only
-// ticks between iterations hides that entire class of bug.
+// When set, every millis() call advances the clock by 1 ms.
 extern bool g_millis_auto_advance;
 
 inline uint32_t millis() {
@@ -26,8 +20,7 @@ inline uint32_t millis() {
   return t;
 }
 
-// Stands in for Arduino's HardwareSerial. Bytes written by the driver land in
-// tx; bytes the test injects into rx are handed back by read().
+// Stands in for Arduino's HardwareSerial.
 class HardwareSerial {
  public:
   std::string tx;

@@ -1,24 +1,4 @@
-<!--
-  Person following (labrobot M6). Sent by person_follower.py as the
-  `behavior_tree` of a NavigateToPose goal; the goal is then moved by
-  publishing geometry_msgs/PoseStamped on /goal_update (GoalUpdater).
-
-  Based on Nav2's follow_point.xml, with three deliberate changes:
-  * NO TruncatePath. The follower already sends the STAND-OFF point (1.2 m
-    short of the person, facing them), not the person's position: the person
-    is a lethal obstacle in the costmap, so a plan TO them fails, and keeping
-    them in the costmap is a safety decision (PROJECT_REPORT M6).
-  * Replanning at 2 Hz rather than 1: the goal moves with a walking person.
-  * After FollowPath succeeds (robot at the stand-off and facing the
-    person), a 1 s Wait before following again (Humble's Wait takes WHOLE
-    seconds: "0.5" was read as 0 and the loop re-ran every ~70 ms). In follow_point.xml the
-    succeeded FollowPath is re-ticked at the BT loop rate (100 Hz), sending a
-    new controller goal each time - CPU this robot does not have.
-  FollowPath uses `follow_goal_checker` (looser than missions' 0.10 m), so
-  the robot settles near the stand-off point instead of hunting for it.
-  Any failure (no plan, controller abort) ends the action; the follower
-  decides what to do next (retry, LOST, ...).
--->
+<!-- Person following (labrobot M6). -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
     <PipelineSequence name="FollowPerson">

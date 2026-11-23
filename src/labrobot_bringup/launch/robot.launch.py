@@ -1,25 +1,7 @@
 # Everything, in the right order, with the right delays.
-#
 #   ros2 launch labrobot_bringup robot.launch.py                    # drive + see
 #   ros2 launch labrobot_bringup robot.launch.py mapping:=true      # build a map
 #   ros2 launch labrobot_bringup robot.launch.py localization:=true # use a map
-#
-# KEEP THE ROBOT STILL for the first ~30 seconds. The gyro bias is estimated from
-# 10 s of stationary data and everything downstream inherits that estimate; a
-# nudge during it poisons heading for the whole session.
-#
-# Why the delays are not cosmetic
-# -------------------------------
-#   camera  -> t+0    Needs ~20 s to enumerate, open profiles and settle.
-#   drive   -> t+0    Independent of the camera.
-#   local.  -> t+22   imu_bias_compensator must see /camera/camera/imu ALREADY
-#                     FLOWING, because it averages the first 10 s it receives. If
-#                     it starts early it averages a partial or empty stream.
-#   mapping -> t+45   RTAB-Map needs the EKF publishing odom -> base_footprint
-#                     before its first frame, or it drops frames waiting for TF.
-#
-# Starting these by hand in the wrong order produces failures that all look like
-# "the map is bad" rather than "a node started 3 seconds too early".
 
 import os
 
@@ -44,11 +26,7 @@ def _include(name, condition=None, args=None):
     return IncludeLaunchDescription(src, **kwargs)
 
 
-
 def _dds_profile():
-    """Fast DDS shared-memory segment big enough for clouds and raw images
-    (config/fastdds_shm.xml explains why). Every node launched after this
-    inherits it."""
     return SetEnvironmentVariable(
         'FASTRTPS_DEFAULT_PROFILES_FILE',
         os.path.join(get_package_share_directory('labrobot_bringup'), 'config', 'fastdds_shm.xml'))
@@ -82,12 +60,7 @@ def generate_launch_description():
             'grid_3d', default_value='false',
             description='Also publish a 3D voxel cloud on /cloud_map, for looking '
                         'at in Foxglove. Nav2 does not need it.'),
-        # Default TRUE. It was false, with "REQUIRED for Nav2" in the
-        # description - and on 2026-10-07 a whole session ran Nav2 with no
-        # cloud at all. Both costmaps then held only the saved map, so two boxes
-        # placed after mapping were invisible and a goal through the gap
-        # between them would have driven into one. Turning the cloud off must
-        # be a deliberate choice (teleop-only mapping), never a default.
+        # Default true: without the cloud Nav2 sees no new obstacles.
         DeclareLaunchArgument(
             'pointcloud', default_value='true',
             description='Publish the depth point cloud. REQUIRED for Nav2 - it is '
@@ -119,10 +92,6 @@ def generate_launch_description():
             _include('mapping.launch.py', condition=IfCondition(localization),
                      args={'delete_db': 'false', 'localization': 'true',
                            'grid_3d': grid_3d}.items()),
-            # Continue the saved map AND keep learning: delete_db false so the
-            # existing map loads, localization false so Mem/IncrementalMemory
-            # stays on. Loop closure corrects drift against what is already
-            # mapped while new nodes are still being added for new space.
             _include('mapping.launch.py', condition=IfCondition(slam),
                      args={'delete_db': 'false', 'localization': 'false',
                            'grid_3d': grid_3d}.items()),

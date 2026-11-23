@@ -1,26 +1,7 @@
 #!/usr/bin/env python3
 """Dry-run test of person_follower's state machine with a scripted virtual person.
 
-The robot does NOT move: the follower runs with dry_run:=true (it never sends
-NavigateToPose, Spin or a speed limit - this test also LISTENS on /goal_update
-and /speed_limit and fails if anything appears there). The live Nav2 planner
-is asked for plans (planning only). Needs the stack up; person_tracker must
-NOT be running (this script plays its part).
-
     python3 tools/test_follower_dry.py
-
-Script (person positions relative to the robot's pose at the start, odom):
-  0-4 s    2.5 m ahead, still          -> start -> ACQUIRE -> FOLLOW,
-                                          goal 1.3 m ahead facing them (the
-                                          planner is asked; its answer is INFO)
-  4-9 s    walks to 3.0 m ahead, 1.0 m left at 0.2 m/s
-                                       -> goal follows, heading turns left
-  9-12 s   steps to 1.0 m ahead        -> inside stand-off: goal = robot, turn only
-  12-15 s  0.6 m ahead                 -> "holding - too close"
-  15-16 s  back to 2.5 m
-  16-   s  disappears                  -> LOST -> (goes to last seen) -> SEARCH -> WAIT
-  in WAIT  reappears 2.5 m ahead       -> FOLLOW again
-  then     disappears for good         -> ... -> IDLE "target lost"
 """
 
 import json
@@ -120,9 +101,6 @@ def main():
     proc = subprocess.Popen(
         ['ros2', 'run', 'labrobot_follow', 'person_follower.py', '--ros-args',
          '-p', 'dry_run:=true', '-p', 'search_wait_s:=4.0', '-p', 'lost_hold_s:=1.0',
-         # the virtual person stands wherever the script says, maybe inside
-         # real furniture: the costmap's goal shifting (free_goal) is unit-
-         # tested separately (test_follow_logic.py), so it is off here
          '-p', 'goal_free_cost:=256'],
         stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, start_new_session=True)
     results = []
@@ -149,8 +127,6 @@ def main():
         run(2.0, lambda k: rel(2.5, 0))     # let its TF buffer fill
         n.pub_cmd.publish(String(data='start'))
         t_start = time.monotonic()
-        # moving at 1 m/s: must NOT start following (memory would hold only
-        # views of someone walking past - 2026-11-12)
         run(3.0, lambda k: rel(2.5, 0), vel=(1.0, 0.0))
         s = last_status(n, t_start)
         check('start while the person moves -> ACQUIRE, stand still', 'stand still' in s, s)
@@ -165,8 +141,6 @@ def main():
               f'goal {np.round(gxy - r0, 3)} expected {np.round(rel(1.3, 0) - r0, 3)}')
         check('goal faces the person', abs(math.atan2(math.sin(gh - yaw0), math.cos(gh - yaw0))) < 0.02,
               f'{math.degrees(gh - yaw0):.1f} deg')
-        # INFO only: the real room decides whether a plan exists (on
-        # 2026-11-11 the robot faced a bench 0.4 m away)
         print(f'INFO  planner asked: {n.plans} plans received; status: {s}')
 
         a, b = rel(2.5, 0), rel(3.0, 1.0)

@@ -3,8 +3,6 @@ project(labrobot_description)
 
 find_package(ament_cmake REQUIRED)
 
-# This is a resource-only package: install the description, configuration and
-# launch files into the package share directory.
 install(
   DIRECTORY urdf meshes config rviz launch
   DESTINATION share/${PROJECT_NAME}

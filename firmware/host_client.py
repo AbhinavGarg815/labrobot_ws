@@ -1,18 +1,10 @@
 #!/usr/bin/env python3
 """Host-side client for the labrobot binary protocol.
 
-Talks to production firmware over /dev/labrobot_mcu, so the link can be
-exercised end to end before the ros2_control plugin exists. Also useful later
-for diagnosing the link without bringing up ROS.
-
     firmware/host_client.py --status                 watch status for 5 s
     firmware/host_client.py --ping
     firmware/host_client.py --drive 10 10 --seconds 4    wheel-rpm per side
     firmware/host_client.py --watchdog-test          prove the robot self-stops
-
-Motion commands stream at 20 Hz and always send a stop on exit, including on
-Ctrl-C: this robot has no kill switch, so the client must never be the reason
-the wheels keep turning.
 """
 
 import argparse
@@ -45,7 +37,7 @@ MAX_MRAD_S = 6283  # 60 rpm = 2*pi rad/s
 
 
 def crc16(data: bytes) -> int:
-    """CRC-16/CCITT-FALSE. Must match labrobot_protocol.cpp exactly."""
+    """CRC-16/CCITT-FALSE."""
     crc = 0xFFFF
     for b in data:
         crc ^= b << 8

@@ -1,24 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Fast DDS transport profile for labrobot (M6, 2026-11-12).
-
-  WHY: Fast DDS's shared-memory transport defaults to a 512 KB segment per
-  participant. The publisher allocates each message in ITS segment, so a
-  message bigger than that (the depth cloud ~700 KB, a raw 640x480 colour
-  image 921 KB) cannot go through shared memory and falls back to UDP
-  loopback, fragmented. Best-effort subscribers - Nav2's costmap layers, the
-  person tracker, the collision monitor - then lose many of them: measured
-  7.4 of 15 Hz for the cloud on the running robot (reliable subscriber:
-  15.0 Hz). Isolated test, 700 KB at 15 Hz to a best-effort subscriber:
-  13.2 Hz with the default, 14.8 Hz with a 16 MB segment.
-
-  8 MB holds ~8 of the largest messages in flight per publisher. Pages are
-  only touched when used, so idle participants cost nothing real.
-  Loaded by FASTRTPS_DEFAULT_PROFILES_FILE, set in robot.launch.py,
-  navigation.launch.py and labrobot_follow's follow.launch.py.
-  UDPv4 stays enabled for anything outside this machine (Foxglove bridge
-  serves its WebSocket separately; this is DDS only).
--->
+<!-- Fast DDS transport profile for labrobot (M6, 2026-11-12). -->
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <transport_descriptors>
     <transport_descriptor>

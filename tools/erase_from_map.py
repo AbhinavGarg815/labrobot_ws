@@ -3,27 +3,6 @@
 
     python3 tools/erase_from_map.py --db ~/.ros/rtabmap.db --box X0 X1 Y0 Y1 --dry-run
     python3 tools/erase_from_map.py --db ~/.ros/rtabmap.db --box X0 X1 Y0 Y1
-
-Run it with the robot stack STOPPED (RTAB-Map must not have the database open).
-
-Why edit the nodes and not the picture
---------------------------------------
-RTAB-Map's 2D map is not stored as the truth; it is ASSEMBLED from each node's
-own local obstacle list (Data.obstacle_cells, points in the node's frame),
-placed by the node's optimised pose. Painting over the assembled grid only
-lasts until the next rebuild - and lifelong mapping rebuilds it whenever a loop
-closure re-optimises the graph. So this removes the obstacle at the source:
-every node's points that land inside the box (map frame, plus --margin) are
-deleted, and the stored grid is cleared so RTAB-Map rebuilds it from the
-edited nodes on next load.
-
-First use (2026-10-27): a person standing at (0.15, -0.12) in map v6 had been
-recorded by 18 nodes (613 points). After the edit the 0.65 x 0.60 m box went
-from 70 occupied cells to 0, and not one cell changed outside it.
-
-A timestamped backup of the database is written next to it before any change.
-Find the box by drawing the map with a grid (see docs/logs/map_grid.png and the
-PROJECT_REPORT entry "Map v6") - coordinates are map-frame metres.
 """
 import argparse
 import os

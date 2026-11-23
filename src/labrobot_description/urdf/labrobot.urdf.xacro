@@ -1,33 +1,16 @@
 <?xml version="1.0"?>
-<!--
-  labrobot - two-wheeled differential-drive indoor robot on four swivel casters.
-
-  Perception is camera-only: an Intel RealSense D435i on a mast at ~0.84 m,
-  pitched 10.78 deg down (measured as-built; the design intent was 15 deg).
-  There is no lidar.
-
-  Build for the real robot (default):
-      xacro labrobot.urdf.xacro
-  Build for Gazebo:
-      xacro labrobot.urdf.xacro use_sim:=true
-
-  All calibratable numbers live in labrobot_properties.xacro.
--->
+<!-- labrobot - two-wheeled differential-drive indoor robot on four swivel casters. -->
 <robot name="labrobot" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <!-- Target selection. use_sim swaps the ros2_control hardware plugin and
-       pulls in the Gazebo sensor/plugin block. -->
+  <!-- Target selection. use_sim swaps the ros2_control hardware plugin and pulls in the Gazebo sensor/plugin block. -->
   <xacro:arg name="use_sim" default="false"/>
   <xacro:property name="use_sim" value="$(arg use_sim)"/>
 
-  <!-- Serial link to the Arduino Mega (hardware only). The default is the udev
-       symlink installed by scripts/00_setup_jetson.sh. -->
+  <!-- Serial link to the Arduino Mega (hardware only). -->
   <xacro:arg name="mcu_port" default="/dev/labrobot_mcu"/>
   <xacro:arg name="mcu_baud" default="500000"/>
 
-  <!-- Only consumed by the Gazebo plugin block, so it defaults to the sim
-       config. On hardware the controller_manager is configured from the launch
-       file with config/controllers.yaml instead. -->
+  <!-- Only consumed by the Gazebo plugin block, so it defaults to the sim config. -->
   <xacro:arg name="controllers_config"
              default="$(find labrobot_description)/config/controllers_gazebo.yaml"/>
 
@@ -44,8 +27,7 @@
       mcu_port="$(arg mcu_port)"
       mcu_baud="$(arg mcu_baud)"/>
 
-  <!-- Zero-friction contact sphere for one fixed caster. Declared here so it
-       can be expanded inside base_link below. -->
+  <!-- Zero-friction contact sphere for one fixed caster. -->
   <xacro:macro name="caster_collision" params="name x y">
     <collision name="${name}">
       <origin xyz="${x} ${y} ${caster_radius}" rpy="0 0 0"/>
@@ -55,13 +37,6 @@
     </collision>
   </xacro:macro>
 
-  <!-- ======================================================================
-       Base
-
-       base_link's origin sits on the ground plane directly below the robot
-       centre, so base_footprint coincides with it exactly. Kept as a separate
-       link because Nav2 and the diff_drive_controller both expect it.
-       ====================================================================== -->
 
   <link name="base_footprint"/>
 
@@ -86,10 +61,7 @@
       <material name="silver"/>
     </visual>
 
-    <!-- Collision is built from primitives rather than the 230k-triangle visual
-         mesh. The mesh costs milliseconds per contact query and buys nothing:
-         the chassis is a box with a thin mast on top. Extents come from a
-         height-banded cross-section of base_link.stl. -->
+    <!-- Collision is built from primitives rather than the 230k-triangle visual mesh. -->
     <collision name="body_collision">
       <origin xyz="0 0 ${body_height / 2.0}" rpy="0 0 0"/>
       <geometry>
@@ -104,24 +76,13 @@
       </geometry>
     </collision>
 
-    <!-- Four SWIVEL casters, one per corner. They are already part of the
-         base_link mesh, so they get no links of their own - just zero-friction
-         contact spheres so the chassis rests on four points instead of dragging
-         its collision box. Modelling the pivot would only matter if we needed
-         to simulate the sideways kick they give at each direction change. -->
+    <!-- Four SWIVEL casters, one per corner. -->
     <xacro:caster_collision name="caster_fl" x="${ caster_inset_x}" y="${ caster_inset_y}"/>
     <xacro:caster_collision name="caster_fr" x="${ caster_inset_x}" y="${-caster_inset_y}"/>
     <xacro:caster_collision name="caster_rl" x="${-caster_inset_x}" y="${ caster_inset_y}"/>
     <xacro:caster_collision name="caster_rr" x="${-caster_inset_x}" y="${-caster_inset_y}"/>
   </link>
 
-  <!-- ======================================================================
-       Drive wheels
-
-       The visual origins cancel the joint origins because the STLs were
-       exported in the assembly frame rather than about each part's own origin.
-       Do not "simplify" them away - the meshes would fly off to the corner.
-       ====================================================================== -->
 
   <xacro:macro name="drive_wheel" params="side reflect">
     <link name="${side}_wheel_link">
@@ -139,8 +100,7 @@
         <material name="dark_grey"/>
       </visual>
 
-      <!-- A cylinder about the rolling axis. Rotated onto Y because URDF
-           cylinders are defined along Z. -->
+      <!-- A cylinder about the rolling axis. -->
       <collision>
         <origin xyz="0 ${reflect * 0.016} 0" rpy="${half_pi} 0 0"/>
         <geometry>
@@ -160,20 +120,8 @@
   <xacro:drive_wheel side="left"  reflect="1"/>
   <xacro:drive_wheel side="right" reflect="-1"/>
 
-  <!-- ======================================================================
-       RealSense D435i
 
-       Two links, on purpose:
-         camera_mount_link - unrotated, carries the visual mesh (the STL is
-                             exported in the assembly frame with the design's
-                             15 deg baked in, so the visual counter-rotates)
-         camera_link       - the real optical mounting frame, at the MEASURED
-                             10.78 deg, and the frame realsense2_camera hangs
-                             its own factory-calibrated frames beneath
-       ====================================================================== -->
-
-  <!-- Unrotated, and carries the visual. Keeping it unrotated is what lets the
-       mesh transform stay simple; the as-built tilt lives on camera_link. -->
+  <!-- Unrotated, and carries the visual. -->
   <link name="camera_mount_link">
     <inertial>
       <origin xyz="0.011258465185769444 -0.00043994587150039265 -0.003033037165243946" rpy="0 0 0"/>
@@ -181,9 +129,7 @@
       <inertia ixx="3.4e-05" iyy="5e-06" izz="3.4e-05" ixy="0.0" iyz="0.0" ixz="0.0"/>
     </inertial>
 
-    <!-- The origin here counter-rotates the mesh from the design's 15 deg to the
-         as-built 10.78 deg, so the rendered camera matches its own TF axes.
-         xyz is -R*c, not -c, because the rotation moves the mesh too. -->
+
     <visual>
       <origin xyz="${camera_visual_x} ${camera_visual_y} ${camera_visual_z}"
               rpy="0 ${camera_visual_pitch} 0"/>
@@ -207,23 +153,7 @@
     <child link="camera_mount_link"/>
   </joint>
 
-  <!-- camera_link is the frame realsense2_camera publishes its internal frames
-       FROM, so it must be the true optical mounting frame: tilted by the
-       MEASURED 10.78 deg, not the design's 15 deg.
-       Splitting it out this way keeps the visual mesh transform untouched -
-       rotating camera_link directly would have meant counter-rotating the mesh
-       origin by hand, which is easy to get subtly wrong.
 
-       Everything below camera_link (depth / colour / IMU frames and their
-       optical variants) is deliberately NOT defined here. The camera publishes
-       those itself from its factory calibration, which carries this unit's real
-       depth-to-colour imager misalignment (measured: 0.98 deg of roll). The URDF
-       cannot know that number, and a nominal zero would tilt the point cloud by
-       ~34 mm at 2 m. Division of labour: the URDF owns where the camera is
-       BOLTED, the camera owns what it is internally.
-
-       Consequence: those frames only exist while the camera node is running,
-       and camera.launch.py must keep camera_publish_tf:=true. -->
   <link name="camera_link"/>
 
   <joint name="camera_optical_mount_joint" type="fixed">

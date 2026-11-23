@@ -1,20 +1,4 @@
-"""Minimal TensorRT 10 runtime for the Jetson, with no CUDA Python packages.
-
-TensorRT's own Python bindings are installed system-wide, but pycuda and
-cuda-python are not, and installing them next to ROS's numpy is what the
-project rules forbid. All TensorRT needs from CUDA is device memory, a stream
-and copies, so those come straight from libcudart through ctypes.
-
-Memory model (Jetson: CPU and GPU share DRAM):
-  * every input and output has a PINNED host buffer exposed as a numpy array
-    and a device buffer; copies are cudaMemcpyAsync on one stream;
-  * the caller fills `inputs[name]` in place, calls `infer()`, and reads
-    `outputs[name]`. No allocation happens per call.
-
-Dynamic shapes (e.g. a re-ID batch) are supported: buffers are sized for the
-profile's MAX shape once, and `infer(shapes={name: shape})` sets the actual
-shape; the returned arrays are views trimmed to it.
-"""
+"""Minimal TensorRT 10 runtime for the Jetson, with no CUDA Python packages."""
 
 import ctypes
 import ctypes.util
@@ -54,11 +38,7 @@ _cudart.cudaGetErrorString.restype = ctypes.c_char_p
 _cudart.cudaGetErrorString.argtypes = [ctypes.c_int]
 
 
-# Block (sleep) in cudaStreamSynchronize instead of spinning. CUDA's default
-# on this Jetson spins a CPU core for the whole inference (~20 ms a frame);
-# with the nav stack using 4-7 of 6 cores that is CPU stolen for nothing.
-# Must be set before the first CUDA call creates the context; if a context
-# already exists (another library got there first) it fails harmlessly.
+# Block (sleep) in cudaStreamSynchronize instead of spinning.
 _CUDA_DEVICE_SCHEDULE_BLOCKING_SYNC = 0x04
 _cudart.cudaSetDeviceFlags.argtypes = [ctypes.c_uint]
 BLOCKING_SYNC = _cudart.cudaSetDeviceFlags(_CUDA_DEVICE_SCHEDULE_BLOCKING_SYNC) == 0
@@ -99,8 +79,7 @@ class TrtEngine:
     """Load a serialized TensorRT engine and run it synchronously."""
 
     def __init__(self, engine_path, max_shapes=None):
-        """max_shapes: {tensor_name: shape} for dynamic inputs; defaults to
-        the optimisation profile's maximum."""
+        """max_shapes: {tensor_name: shape} for dynamic inputs; defaults to the optimisation profile's maximum."""
         self._logger = trt.Logger(trt.Logger.WARNING)
         self._runtime = trt.Runtime(self._logger)
         with open(engine_path, 'rb') as f:
@@ -144,9 +123,7 @@ class TrtEngine:
         return self._buffers[name].max_shape
 
     def infer(self, shapes=None):
-        """Run once. shapes: {input_name: actual_shape} for dynamic inputs
-        (the data must already be in the leading part of inputs[name]).
-        Returns {output_name: array view of the actual output shape}."""
+        """Run once."""
         actual_in = {}
         for name in self.input_names:
             shape = tuple(shapes[name]) if shapes and name in shapes else \
@@ -173,8 +150,6 @@ class TrtEngine:
         return result
 
     def input_view(self, name, shape):
-        """Writable view of the leading part of an input buffer, for dynamic
-        shapes: fill it, then infer(shapes={name: shape})."""
         buf = self._buffers[name]
         n = int(np.prod(shape))
         return buf.host.reshape(-1)[:n].reshape(shape)

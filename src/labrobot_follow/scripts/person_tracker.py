@@ -1,46 +1,9 @@
 #!/usr/bin/env python3
-"""Person perception for following: detect, track, identify the target, 3D in odom.
-
-    ros2 run labrobot_follow person_tracker.py --ros-args -p detector_engine:=...
-
-Per colour + aligned-depth frame (GPU for both networks):
-  1. YOLO pose (TensorRT FP16): person boxes + 17 keypoints;
-  2. OSNet re-ID (TensorRT FP16, batched): one appearance vector per person;
-  3. BoT-SORT-style tracker, with camera rotation from TF compensating the
-     predicted boxes (tracker.py);
-  4. per track: depth mode over the hips/thighs region -> point in `odom`;
-  5. target identity: online appearance memory, re-acquisition by re-ID only
-     (identity.py); target position filtered by a constant-velocity Kalman
-     filter in `odom` (geometry.TargetFilter).
-It never commands the robot. The follower (person_follower.py) decides what
-to do with the target.
-
-Topics
-  in   /camera/camera/color/image_raw                     sensor_msgs/Image rgb8
-       /camera/camera/aligned_depth_to_color/image_raw    sensor_msgs/Image 16UC1 (mm)
-       /camera/camera/color/camera_info
-       /labrobot/follow_cmd     std_msgs/String  "select <id>", "start" (lock the
-                                nearest person in front if none), "release"
-       /clicked_point           geometry_msgs/PointStamped (Foxglove 3D "Publish
-                                point"): lock the person nearest the click
-  out  /labrobot/people         vision_msgs/Detection3DArray, odom: every
-                                confirmed track; class_id "target" or "person"
-       /labrobot/follow_target  nav_msgs/Odometry, odom: target KF state
-                                (twist in odom: child_frame_id = odom)
-       /labrobot/target_state   std_msgs/String JSON, every frame: state,
-                                track id, range, bearing, re-ID score, timing
-       /labrobot/follow_debug/compressed  sensor_msgs/CompressedImage (only
-                                while subscribed, <= debug_rate Hz)
-       /labrobot/follow_markers visualization_msgs/MarkerArray (while subscribed)
-"""
+"""Person perception for following: detect, track, identify the target, 3D in odom."""
 
 import os
 
-# One OpenBLAS thread, set BEFORE numpy loads. With the default pool (one per
-# core) every tiny 3x3 matrix product woke the pool and its threads then
-# spin-waited: the tracker used 121% of a core with nobody in view; with one
-# thread, 28% (measured 2026-11-11, M6.T1). Nothing here is big enough to
-# gain from BLAS threads.
+# One OpenBLAS thread, set BEFORE numpy loads.
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 os.environ.setdefault('OMP_NUM_THREADS', '1')
 
@@ -135,9 +98,6 @@ class PersonTrackerNode(Node):
             reid_gate_base_m=g('reid_gate_base_m'), reid_gate_speed_mps=g('reid_gate_speed_mps'),
             reid_thresh=g('reid_thresh'), reid_margin=g('reid_margin'))
 
-        # Robot pose from the EKF's odometry, not a TF listener (19% of a core
-        # on its own - odom_pose.py). TF is listened to only while something
-        # needs it: the static camera mount at startup, and a clicked point.
         self.odom = OdomPoseBuffer()
         self.create_subscription(Odometry, '/odometry/filtered', self.on_odom, 50)
         self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
@@ -174,7 +134,7 @@ class PersonTrackerNode(Node):
         self.get_logger().info(f'person_tracker ready: detector {g("detector_engine")}, '
                                f're-ID {g("reid_engine")}')
 
-    # ------------------------------------------------------------------ inputs
+    # inputs
     def on_info(self, msg):
         if self.K is None:
             self.K = np.array(msg.k, dtype=float).reshape(3, 3)
@@ -245,7 +205,7 @@ class PersonTrackerNode(Node):
         self.get_logger().info(f'target: {text}')
         self.pub_event.publish(String(data=text))
 
-    # ------------------------------------------------------------------ frame
+    # frame
     def lookup_cam(self, frame_id, ts):
         """odom <- camera optical frame at the image time: (R, t) or None."""
         if self.cam_frame is None:
@@ -292,7 +252,7 @@ class PersonTrackerNode(Node):
         self.publish(rgb_msg.header, tracks, state, rgb, times)
         self.perf_log()
 
-    # ------------------------------------------------------------------ output
+    # output
     def publish(self, header, tracks, st, rgb, times):
         odom_header = header.__class__()
         odom_header.stamp = header.stamp

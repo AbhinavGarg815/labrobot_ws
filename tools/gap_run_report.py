@@ -4,16 +4,6 @@
     python3 tools/gap_edges.py --save /tmp/edges.json      # before the run
     python3 tools/record_path.py /tmp/run.json 120 &       # during the run
     python3 tools/gap_run_report.py /tmp/edges.json /tmp/run.json
-
-Everything is compared in the frame of the robot's pose when the edges were
-measured (odom frame, so a relocalisation mid-run cannot shift anything).
-For each 10 cm slice of the gap it prints:
-
-  route off-centre  the live plan Nav2 was following when the robot reached
-                    that slice, relative to the measured gap centre  -> planner
-  robot off-route   the robot's centre relative to that plan           -> controller
-  clearance         from the robot's body outline (0.42 x 0.406 m, heading
-                    included) to each measured edge
 """
 import json, math, sys
 

@@ -1,17 +1,7 @@
 #!/usr/bin/env bash
 # Measure the CPU cost and achieved frame rate of a RealSense profile.
-#
-#     scripts/measure_camera_cost.sh <depth_wxh> <color_wxh> <fps> <align_depth>
-#     scripts/measure_camera_cost.sh 848x480 640x480 30 false
-#
-# Why measure rather than assume: this Orin Nano is capped at 15 W with no MAXN
-# mode available, and RTAB-Map still has to run on top of whatever the camera
-# leaves behind. Choosing a profile by eye and discovering the cost during a
-# mapping run - as dropped frames and broken odometry - is the expensive way to
-# find out.
-#
-# Reports ACHIEVED rate, not the requested one. A camera that silently delivers
-# 12 fps when asked for 30 looks identical in the launch file.
+#   scripts/measure_camera_cost.sh <depth_wxh> <color_wxh> <fps> <align_depth>
+#   scripts/measure_camera_cost.sh 848x480 640x480 30 false
 
 set -eo pipefail
 
@@ -30,10 +20,6 @@ echo "=== profile: depth $DEPTH, color $COLOR @ ${FPS}fps, align_depth=$ALIGN ==
 
 LOG=$(mktemp)
 
-# The camera is a single-claim device: a node that is still shutting down holds
-# it, and the next one fails with "Device or resource busy" then retries in a
-# tight loop. That produced a plausible-looking 4.8 fps result that was purely
-# two processes fighting - so make cleanup explicit and verify it took.
 cleanup() {
     pkill -f realsense2_camera_node 2>/dev/null || true
     pkill -f "rs_launch.py" 2>/dev/null || true
@@ -67,16 +53,12 @@ ros2 launch realsense2_camera rs_launch.py \
     pointcloud.enable:=false \
     > "$LOG" 2>&1 &
 
-# Streams take a few seconds to start; measuring during startup would report
-# the initialisation burst rather than the steady state.
 sleep 12
 
 echo
 echo "--- achieved rates over ${DURATION}s ---"
 for topic in /camera/camera/depth/image_rect_raw /camera/camera/color/image_raw; do
     printf "  %-42s " "$(basename $(dirname $topic))/$(basename $topic)"
-    # `timeout` kills ros2 topic hz, so with pipefail the pipeline always
-    # "fails"; capture first and test the string instead of the exit status.
     rate=$(timeout $((DURATION/2)) ros2 topic hz "$topic" --window 30 2>/dev/null \
              | grep -oE "average rate: [0-9.]+" | tail -1 || true)
     echo "${rate:-NO DATA}"

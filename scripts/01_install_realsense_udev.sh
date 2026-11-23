@@ -1,30 +1,6 @@
 #!/usr/bin/env bash
-# Install the Intel RealSense udev rules.  RUN WITH sudo.
-#
-#     sudo bash scripts/01_install_realsense_udev.sh
-#
-# Why this is needed
-# ------------------
-# On this Jetson the D435i's colour and depth streams work out of the box,
-# because they appear as /dev/video* nodes owned by group "video" and the user
-# is in that group. The IMU does not: it lives behind the camera's HID
-# interface, and there are two ways to reach it.
-#
-#   1. The kernel IIO path, via hid-sensor-accel-3d / hid-sensor-gyro-3d.
-#      Those modules are NOT built for the JetPack kernel here (checked with
-#      find over /lib/modules), so this path does not exist.
-#
-#   2. libusb, claiming the HID interface directly. librealsense is built with
-#      the libusb backend, so this works - but claiming an interface held by
-#      usbhid requires WRITE access to the raw USB node, and
-#      /dev/bus/usb/BBB/DDD ships as crw-rw-r-- root:root.
-#
-# So the IMU is unreachable purely for want of write permission on one device
-# node. These rules set MODE 0666 / GROUP plugdev on Intel RealSense devices,
-# which is exactly what closes the gap.
-#
-# The rules file is vendored in scripts/udev/ rather than downloaded at install
-# time, so provisioning works offline and cannot silently change under us.
+# Install the Intel RealSense udev rules.
+#   sudo bash scripts/01_install_realsense_udev.sh
 
 set -euo pipefail
 
@@ -65,9 +41,6 @@ install -m 0644 "$SRC" "$DST"
 
 echo "=== reloading udev (scoped to Intel USB devices only) ==="
 udevadm control --reload-rules
-# Scoped deliberately: a blanket `udevadm trigger` re-runs rules for every
-# device on the machine, including the Arduino, and there is no reason to
-# disturb a working motor link to fix a camera.
 udevadm trigger --subsystem-match=usb --attr-match=idVendor=8086
 sleep 2
 

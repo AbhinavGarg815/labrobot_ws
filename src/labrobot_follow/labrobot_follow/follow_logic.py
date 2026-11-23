@@ -14,8 +14,7 @@ def wrap(a):
 
 
 def standoff_goal(robot_xy, person_xy, standoff):
-    """(goal_xy, heading) for a target at person_xy. Never behind the robot:
-    inside the stand-off the goal is the robot's own position."""
+    """(goal_xy, heading) for a target at person_xy."""
     r = np.asarray(robot_xy, float)
     p = np.asarray(person_xy, float)
     d = p - r
@@ -31,15 +30,6 @@ def adaptive_speed(person_speed, dist, standoff, gain, vmin, vmax):
 
 
 class Costmap:
-    """Lookup into the local costmap as published on /local_costmap/costmap_raw
-    (nav2_msgs/Costmap, odom frame, Nav2's own 0-255 scale: 253 inscribed,
-    254 lethal, 255 unknown).
-
-    Not the OccupancyGrid on /local_costmap/costmap: Nav2 publishes that in
-    full only when the rolling window moves (TRANSIENT_LOCAL) and as
-    incremental updates otherwise, so a plain subscriber gets it rarely and
-    stale. costmap_raw is the whole grid every cycle (~2 Hz).
-    """
 
     def __init__(self, msg):
         md = msg.metadata
@@ -53,7 +43,7 @@ class Costmap:
 
     def cost(self, xy, radius=0.0):
         """Max cost within radius of xy; None outside the window."""
-        # floor with a tiny epsilon: (0.40 + 1.5) / 0.05 is 37.999... in floats
+        # floor with a tiny epsilon: (0.40 + 1.5) / 0.05 is 37.999...
         cx = math.floor((xy[0] - self.ox) / self.res + 1e-9)
         cy = math.floor((xy[1] - self.oy) / self.res + 1e-9)
         r = int(math.ceil(radius / self.res - 1e-9))
@@ -65,15 +55,7 @@ class Costmap:
 
 def free_goal(costmap, robot_xy, person_xy, goal_xy, heading, standoff, max_cost,
               angles_deg=(15, -15, 30, -30, 45, -45, 60, -60)):
-    """Move a stand-off goal that lies in an obstacle round the person.
-
-    Returns (goal_xy, heading, note). A turn-only goal (the robot's own
-    position) is returned unchanged: the robot is already there, and its own
-    cell can carry inflation from whatever it is standing next to. Outside
-    the costmap window the goal is kept (the planner decides). If nothing on
-    the stand-off arc (+/-60 deg) is free, the robot stays and faces the
-    person.
-    """
+    """Move a stand-off goal that lies in an obstacle round the person."""
     robot_xy = np.asarray(robot_xy, float)
     person_xy = np.asarray(person_xy, float)
     goal_xy = np.asarray(goal_xy, float)

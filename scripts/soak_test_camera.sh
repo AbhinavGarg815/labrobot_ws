@@ -1,41 +1,6 @@
 #!/usr/bin/env bash
-# Rigorous D435i link soak test. Run after any cable or port change.
-#
-#     scripts/soak_test_camera.sh [total_minutes]     (default 6)
-#
-# The time is split evenly between two phases, because the two questions need
-# different instruments and the probe needs exclusive access to the camera:
-#
-#   PHASE 1  LINK HEALTH - librealsense directly, no ROS. Counts dropped frames
-#            from the FRAME NUMBER, so a frame the link lost leaves a hole in the
-#            sequence that no host CPU load can fake or hide. This phase decides
-#            PASS/FAIL.
-#
-#   PHASE 2  PIPELINE HEALTH - the ROS topics the robot will actually consume.
-#            Reported, and a shortfall WARNS rather than fails.
-#
-# Why the split, learned the hard way
-# -----------------------------------
-# The first version judged the cable by the frame rate on the ROS depth topic.
-# That number measured 25.9, 29.2 and 29.5 fps across three consecutive runs on
-# identical hardware, because it is a property of the ROS node, DDS and Jetson
-# scheduling - three layers above the link. It produced a confident FAIL on a
-# cable that was delivering 29.97 fps with ZERO dropped frames when asked
-# directly. A rate shortfall on a ROS topic is evidence about the host, not the
-# cable, and the tool now says so instead of conflating them.
-#
-# What is measured, and why each one earns its place
-# --------------------------------------------------
-#   1. LINK SPEED      - a D435i on USB 2 does not fail, it silently delivers a
-#                        third of the frame rate. Checked first; aborts if wrong.
-#   2. DROPPED FRAMES  - from frame numbers, at the source. The real question.
-#   3. RE-ENUMERATIONS - the USB device number changing means the link dropped
-#                        and came back. This is the fault that killed mapping
-#                        runs, and it is invisible to a short test.
-#   4. KERNEL RESETS   - dmesg USB resets for this device over the run.
-#   5. TF LIVENESS     - the nastiest observed failure: the node stays alive and
-#                        keeps streaming while its latched TF stops reaching new
-#                        subscribers. `pgrep` says healthy; every consumer breaks.
+# Rigorous D435i link soak test.
+#   scripts/soak_test_camera.sh [total_minutes]     (default 6)
 
 set -eo pipefail
 
@@ -69,16 +34,10 @@ echo " D435i LINK SOAK TEST - ${PHASE_MIN} min per phase, ${TOTAL_MIN} min total
 echo "=========================================================================="
 echo
 
-# --- 0. link speed, before anything else ----------------------------------
 echo "--- 0. link speed ---"
 "$HERE/check_camera_usb.sh" || true
 
-# Read the speed with an explicit loop, NOT `for ... done | head -1` in a command
-# substitution. Under `set -e` with pipefail that construct takes the exit status
-# of the LAST loop iteration - and the last entry in the glob is never the
-# RealSense - so the assignment "failed" and killed the script one line before
-# the guard below could run. The abort never printed, and the resulting exit 1
-# looked exactly like the guard firing.
+# Explicit loop: `for ... | head -1` fails under set -e with pipefail.
 SPEED=""
 USBPATH=""
 for d in /sys/bus/usb/devices/*/; do
@@ -89,9 +48,6 @@ for d in /sys/bus/usb/devices/*/; do
     break
 done
 
-# Allow-list rather than blocking 480 specifically: an empty or unexpected speed
-# means we could not establish the link is good, and soaking on that assumption
-# is how a cable fault gets misfiled as a SLAM bug.
 case "$SPEED" in
     5000|10000) ;;
     *)
@@ -104,7 +60,7 @@ case "$SPEED" in
 esac
 echo
 
-# --- build the link probe --------------------------------------------------
+# build the link probe
 if [ ! -x "$PROBE_BIN" ] || [ "$PROBE_SRC" -nt "$PROBE_BIN" ]; then
     echo "--- building rs_link_probe ---"
     mkdir -p "$(dirname "$PROBE_BIN")"
@@ -114,9 +70,6 @@ if [ ! -x "$PROBE_BIN" ] || [ "$PROBE_SRC" -nt "$PROBE_BIN" ]; then
     echo
 fi
 
-# --- re-enumeration watcher, running across both phases --------------------
-# Polls sysfs (a single cheap file read) rather than shelling out to lsusb, so it
-# cannot perturb what it is measuring.
 : > "$DEVWATCH"
 (
     last=""
@@ -139,9 +92,6 @@ WATCH_PID=$!
 
 DMESG_BEFORE=$(dmesg 2>/dev/null | grep -ci "usb ${USBPATH}.*reset" || true)
 
-# ==========================================================================
-# PHASE 1 - link health, measured at the link
-# ==========================================================================
 echo "--- 1. LINK HEALTH (librealsense direct, no ROS) ---"
 pkill -f "realsense2[_]camera_node" 2>/dev/null || true
 sleep 3
@@ -153,9 +103,6 @@ if "$PROBE_BIN" "$PHASE_SEC" 1; then
 fi
 echo
 
-# ==========================================================================
-# PHASE 2 - pipeline health, through ROS
-# ==========================================================================
 echo "--- 2. PIPELINE HEALTH (ROS topics the robot actually consumes) ---"
 ros2 launch labrobot_bringup camera.launch.py > "$LOG" 2>&1 &
 sleep 22
@@ -304,7 +251,6 @@ REENUM=$(wc -l < "$DEVWATCH" | tr -d ' ')
 DMESG_AFTER=$(dmesg 2>/dev/null | grep -ci "usb ${USBPATH}.*reset" || true)
 RESETS=$(( DMESG_AFTER - DMESG_BEFORE ))
 
-# ==========================================================================
 echo
 echo "=========================================================================="
 echo "VERDICT"

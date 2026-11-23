@@ -76,11 +76,7 @@
       <always_on>true</always_on>
       <update_rate>${cam_fps}</update_rate>
       <visualize>false</visualize>
-      <!-- Render depth from the COLOR optical frame: same y-offset (0.015),
-           same FOV (1.211259) and same pitch as the color sensor. This makes
-           the depth image pixel-registered to the color image, mirroring the
-           real D435i `align_depth:=true` output that RTAB-Map's RGB-D pipeline
-           expects. -->
+      
       <pose>0 0.015 0 0 ${camera_pitch} 0</pose>
       <camera name="camera_d435i_depth">
         <horizontal_fov>1.211259</horizontal_fov>
@@ -117,9 +113,7 @@
     <sensor name="camera_d435i_imu" type="imu">
       <always_on>true</always_on>
       <update_rate>200.0</update_rate>
-      <!-- Place + orient the sensor to coincide with camera_imu_optical_frame so the
-           measured axes match the published frame_name. Orientation = Ry(pitch)*R_optical,
-           which for an XYZ optical frame reduces to roll = -(pi/2 + camera_pitch). -->
+      
       <pose>-0.01174 -0.00552 0.0051 ${-1.5707963267948966 - camera_pitch} 0 -1.5707963267948966</pose>
       <imu>
         <angular_velocity>

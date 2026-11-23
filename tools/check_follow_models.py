@@ -3,16 +3,6 @@
 
     python3 tools/check_follow_models.py            # all engines found
     python3 tools/check_follow_models.py --runs 300
-
-Parity: each engine's output on the reference image is compared with the
-original PyTorch model's (tools/follow_model_reference.py). Pass criteria:
-same number of people, every box matched at IoU >= 0.9, score within 0.05,
-visible keypoints within 3 px (median); re-ID cosine to the PyTorch
-embedding >= 0.995 for every crop.
-Latency: wall time of the full Python call (copy in, infer, copy out,
-decode), which is what the node will pay - not just GPU time.
-Robot does not move. Safe with the nav stack running (that is the point:
-the numbers are measured under the real load).
 """
 
 import argparse

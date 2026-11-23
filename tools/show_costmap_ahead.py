@@ -2,12 +2,6 @@
 """Print the local costmap around the robot as text, in the robot's frame.
 
     python3 tools/show_costmap_ahead.py [--ahead 1.5] [--side 1.0]
-
-  #  lethal / inscribed (>= 253)   +  high cost (>= 128)
-  .  some cost (> 0)               _  free        R  the robot centre
-Columns run from the robot's left (+side) to its right (-side), 10 cm each;
-rows are metres ahead. Reads /local_costmap/costmap_raw (the full grid each
-cycle) and /odometry/filtered. The robot does not move.
 """
 import argparse
 import math

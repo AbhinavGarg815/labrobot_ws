@@ -2,18 +2,6 @@
 """Convert every goal clicked in Foxglove into the map frame, once, on arrival.
 
     ros2 run labrobot_bringup goal_relay.py        # started by navigation.launch.py
-
-/goal_pose (any frame) -> /labrobot/goal_pose_map (map frame, stamped now).
-bt_navigator is remapped to listen on /labrobot/goal_pose_map.
-
-Why: Foxglove sends a clicked goal in the 3D panel's DISPLAY frame, stamped
-with the click time. With display frame `odom`, Nav2's planner re-transforms
-the goal odom->map AT THAT STAMP on every replan; after ~10 s the TF buffer
-no longer reaches back that far ("extrapolation into the past"), every
-replan fails and the goal is abandoned (2026-11-11, two goals lost). Here the
-goal is transformed with the LATEST transform - also immune to the PC's
-clock differing from the robot's - and re-stamped, so the planner never needs
-the original time again. A goal already in `map` passes through, re-stamped.
 """
 import math
 

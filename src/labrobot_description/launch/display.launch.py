@@ -1,10 +1,5 @@
 # Visualise the labrobot in RViz2 (no simulation, no hardware).
-#
-# Publishes the robot description and the TF tree. With gui:=true (default) a
-# joint_state_publisher_gui lets you articulate the wheels.
-#
-# Headless TF check over SSH:
-#     ros2 launch labrobot_description display.launch.py gui:=false rviz:=false
+#   ros2 launch labrobot_description display.launch.py gui:=false rviz:=false
 
 import os
 
@@ -45,10 +40,7 @@ def generate_launch_description():
         description='Build the simulation variant of the description.',
     )
 
-    # Expand the xacro at launch time so use_sim is honoured. ParameterValue
-    # with value_type=str is required: without it the URDF is mis-inferred as a
-    # different parameter type. Passing the URDF as a --ros-args override
-    # instead would fail, because rcl rejects embedded newlines.
+    # Expand the xacro at launch time so use_sim is honoured.
     robot_description = ParameterValue(
         Command(['xacro ', xacro_file, ' use_sim:=', use_sim]),
         value_type=str,

@@ -14,9 +14,6 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 
-# The wire format is defined once, in the firmware tree, and compiled into both
-# the Arduino sketch and this plugin. Duplicating it here would let the two ends
-# of the same link drift apart silently.
 set(FIRMWARE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../firmware/labrobot_firmware)
 if(NOT EXISTS ${FIRMWARE_DIR}/labrobot_protocol.h)
   message(FATAL_ERROR

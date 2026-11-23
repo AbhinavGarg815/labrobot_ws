@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
-# Check how the RealSense has negotiated its USB link. Takes about a second.
-#
-#     scripts/check_camera_usb.sh
-#
-# Use this after changing a cable or port, BEFORE running anything else. A D435i
-# on USB 2 does not fail - it silently falls back and delivers a fraction of the
-# frame rate, which downstream looks exactly like a slow SLAM pipeline rather
-# than a cable problem.
-#
-# Measured on this robot: the same configuration gave 30 fps depth on USB 3 and
-# 11.5 fps on USB 2.
+# Check how the RealSense has negotiated its USB link.
+#   scripts/check_camera_usb.sh
 
 set -eo pipefail
 

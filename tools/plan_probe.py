@@ -2,12 +2,6 @@
 """Ask Nav2's planner for a route WITHOUT moving the robot, and show where it goes.
 
     python3 tools/plan_probe.py --forward 2.4 --left -0.10
-
-Calls the compute_path_to_pose action (the planner only - no controller, no
-motion) for a goal given in the robot's own frame, then prints the route's
-lateral position at a range of distances ahead. Use it before any tight
-manoeuvre to confirm the global route actually runs through the middle of a gap
-rather than trusting it will.
 """
 import argparse, math, time, rclpy, tf2_ros
 from rclpy.node import Node

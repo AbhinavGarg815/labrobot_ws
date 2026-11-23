@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
 # Save waypoints by clicking them in Foxglove - the robot does NOT move.
-#
-#     scripts/pick_waypoints.sh a        # saves a1, a2, a3, ... until Ctrl-C
-#
-# In Foxglove's 3D panel use "Publish pose" with the topic set to
-# /waypoint_pick (NOT /goal_pose - Nav2 listens there and would drive).
-# Click the spot, drag for the direction the robot should face. Each click is
-# converted into the map frame and saved to docs/maps/waypoints.yaml.
-# Numbering continues after the highest existing number for that prefix, so a
-# restart never overwrites waypoints already saved. Check them with
-# tools/check_waypoints.py.
+#   scripts/pick_waypoints.sh a        # saves a1, a2, a3, ... until Ctrl-C
 set -uo pipefail
 cd "$(dirname "$0")/.."
 PREFIX=${1:?usage: scripts/pick_waypoints.sh PREFIX   (e.g. a -> a1, a2, ...)}

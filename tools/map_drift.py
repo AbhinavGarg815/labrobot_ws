@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
-"""Did a session bend the saved map? Compare the old nodes of two RTAB-Map databases.
+"""Did a session bend the saved map?
 
     python3 tools/map_drift.py BEFORE.db AFTER.db          # report, exit 0 = OK, 2 = DISTORTED
     python3 tools/map_drift.py BEFORE.db AFTER.db --quiet  # one line
-
-Lifelong mapping adds nodes and loop closures, and RTAB-Map then re-optimises
-the WHOLE graph - so a session can move the nodes that were already mapped.
-Measured (Problem 49 / 50): normal edits move old nodes ~0.5 deg / 4 cm median;
-two sessions re-oriented the map by -4.9 and +3.9 deg (median 34 and 16 cm,
-max 72 cm), which broke global localisation and shifted every saved waypoint.
-
-Compares the optimised poses (Admin.opt_ids/opt_poses, written on every clean
-close) of the nodes present in BOTH files. Read-only on both.
 """
 import argparse
 import math
@@ -37,9 +28,7 @@ def opt_poses(path):
 
 
 def same_map(before, after):
-    """True if AFTER continues BEFORE. A brand-new map also numbers its nodes
-    from 1, so shared ids alone mean nothing: compare the capture time of the
-    first few nodes, which is fixed when a node is created."""
+    """True if AFTER continues BEFORE."""
     stamps = []
     for path in (before, after):
         db = sqlite3.connect(f'file:{path}?mode=ro', uri=True)

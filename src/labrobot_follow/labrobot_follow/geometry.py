@@ -1,15 +1,4 @@
-"""From a 2D person detection + aligned depth to a 3D position with covariance.
-
-Why keypoints, and why hips/thighs rather than the torso: at the follow
-distance this camera sees a person only from the shins to the belt (colour
-rays span +11.8 / -31.5 deg about horizontal at 0.844 m: 0.11-1.10 m tall at
-1.2 m range; see PROJECT_REPORT M6). The box centre then often falls between
-the legs onto the background. Depth is therefore sampled in the "core"
-region spanned by whichever of shoulders / hips / knees are visible, and the
-body's depth is taken as the dominant mode of that region's depth histogram,
-so background seen between the legs and an occluder in front are both
-rejected.
-"""
+"""From a 2D person detection + aligned depth to a 3D position with covariance."""
 
 import numpy as np
 
@@ -20,20 +9,12 @@ CORE_KPTS = (L_SHOULDER, R_SHOULDER, L_HIP, R_HIP, L_KNEE, R_KNEE)
 DEPTH_MIN_M = 0.3
 DEPTH_MAX_M = 8.0
 # Depth hits the front of the body; the person's centre is behind it.
-# Calibrated on the people1 recording (M6.T2, person standing over tape marks
-# at 1.0 / 1.2 / 2.0 / 3.0 m): with 0.10 (a torso's half-depth) the floor
-# range read +5 / +14 / +8 / +6 cm long, mean +8 cm. At these distances the
-# sample is on the thighs, not the torso, and the D435 adds a small scale
-# error; 0.02 makes the mean error zero. Remaining scatter +-4 cm ~ how
-# precisely the marks were stood on.
 BODY_HALF_DEPTH_M = 0.02
 # D435 RMS depth error grows with range squared: 7.4 mm at 1 m (measured, M2.T1).
 DEPTH_RMS_AT_1M = 0.0074
 
 
 def core_region(box, kpts, kpt_conf=0.5, img_w=640, img_h=480):
-    """Pixel rectangle (x0, y0, x1, y1) to sample depth from, and the pixel
-    (u, v) taken as the person's position. kpts: (17, 3) x, y, conf or None."""
     x0, y0, x1, y1 = [float(v) for v in box]
     w, h = x1 - x0, y1 - y0
     pts = None
@@ -45,8 +26,6 @@ def core_region(box, kpts, kpt_conf=0.5, img_w=640, img_h=480):
     if pts is not None:
         rx0, ry0 = pts.min(axis=0)
         rx1, ry1 = pts.max(axis=0)
-        # Joints sit at body edges/centres; widen narrow spans to a body's
-        # width at that range (a third of the box), keep it inside the box.
         cx = (rx0 + rx1) / 2
         half = max((rx1 - rx0) / 2, w / 6)
         rx0, rx1 = cx - half, cx + half
@@ -65,10 +44,7 @@ def core_region(box, kpts, kpt_conf=0.5, img_w=640, img_h=480):
 
 
 def body_depth(depth, region, scale=1.0, bin_m=0.05, keep_m=0.15, min_pixels=30):
-    """Dominant-mode depth (m) in a region of a depth image.
-    depth: float metres (scale 1) or the camera's raw uint16 (scale 0.001);
-    only the sampled pixels are converted.
-    Returns (depth, n_pixels_used) or (None, n_valid)."""
+    """Dominant-mode depth (m) in a region of a depth image."""
     x0, y0, x1, y1 = region
     if x1 <= x0 or y1 <= y0:
         return None, 0
@@ -96,9 +72,6 @@ def backproject(u, v, z, K):
 
 
 def measurement_cov_cam(p_cam, fx, pixel_sigma=6.0, extra_m=0.05):
-    """2x2 covariance on the camera's (x, z) plane: along-ray from the depth
-    noise model + body-depth uncertainty, across-ray from pixel uncertainty +
-    body width. Returned as (sigma_along, sigma_across)."""
     z = p_cam[2]
     s_along = np.hypot(DEPTH_RMS_AT_1M * z * z * 3.0, extra_m)
     s_across = np.hypot(z * pixel_sigma / fx, extra_m)
@@ -106,19 +79,13 @@ def measurement_cov_cam(p_cam, fx, pixel_sigma=6.0, extra_m=0.05):
 
 
 def ground_cov(bearing_xy, s_along, s_across):
-    """2x2 covariance on the ground plane for a measurement whose ray points
-    along unit vector bearing_xy (in the target frame)."""
     c, s = bearing_xy
     R = np.array([[c, -s], [s, c]])
     return R @ np.diag([s_along ** 2, s_across ** 2]) @ R.T
 
 
 class TargetFilter:
-    """2D constant-velocity Kalman filter for the target in `odom`.
-
-    State [x, y, vx, vy]. Process noise: white acceleration with
-    sigma_a (people change pace and turn quickly). Velocity is damped while
-    there are no measurements so a prediction does not run away."""
+    """2D constant-velocity Kalman filter for the target in `odom`."""
 
     def __init__(self, sigma_a=1.0, max_speed=2.0):
         self.sigma_a = sigma_a
@@ -179,8 +146,6 @@ class TargetFilter:
         self.last_meas_t = t
 
     def position_at(self, t, horizon_cap=2.0):
-        """Predicted position at t without changing the filter, extrapolating
-        at most horizon_cap seconds past the last measurement."""
         if self.x is None:
             return None
         dt = min(t, (self.last_meas_t or self.t) + horizon_cap) - self.t

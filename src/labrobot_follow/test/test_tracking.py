@@ -1,7 +1,4 @@
-"""Offline tests for tracker, geometry and identity (no ROS, no GPU).
-
-Run:  python3 -m pytest -q src/labrobot_follow/test
-"""
+"""Offline tests for tracker, geometry and identity (no ROS, no GPU)."""
 
 import math
 import os
@@ -70,9 +67,6 @@ def test_single_person_keeps_id_through_occlusion():
 
 
 def _meet_and_turn_back(use_feat):
-    """A and B walk towards each other, overlap (A behind B: weak, not
-    clean), then each walks back the way they came. A pure motion model
-    predicts they carry on, so without appearance the ids swap."""
     tr = PersonTracker()
     fa, fb = appearance(1), appearance(2)
     seen = {}
@@ -253,10 +247,7 @@ def test_identity_unclean_views_not_learned():
 
 
 def _pass_in_front(use_gate):
-    """people1 (97 s): seated person B at 2.42 m, box cut by the image edge
-    (never clean -> no appearance). Walker A comes in from the right at
-    1.6 m, overlapping B's box while B's detection drops out for a few
-    frames. Without the depth gate B's track jumps onto A."""
+    """people1 (97 s): seated person B at 2.42 m, box cut by the image edge (never clean -> no appearance)."""
     tr = PersonTracker() if use_gate else PersonTracker(gate_base_m=1e9)
     seen = {}
     for i in range(60):
@@ -287,8 +278,6 @@ def test_depth_gate_stops_track_takeover():
 
 
 def test_identity_low_score_alone_is_not_a_switch():
-    """A new view of the target (low score) with nobody else in view must
-    not drop the target: a tracker cannot swap onto nobody."""
     fa, fb = appearance(40), appearance(41)
     idn = TargetIdentity(switch_frames=4)
     idn.lock(1)

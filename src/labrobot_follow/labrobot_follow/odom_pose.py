@@ -1,13 +1,4 @@
-"""Robot pose in odom from /odometry/filtered, instead of a TF listener.
-
-Why: a Python TF listener deserialises every /tf message (~87/s on this
-robot, several transforms each) and wakes the rclpy executor for each - 19%
-of a core measured on its own (2026-11-11), the largest single cost of the
-perception node after the networks. The EKF publishes /odometry/filtered
-(50 Hz, one small message) AND the odom -> base_footprint TF from the same
-estimate (ekf.yaml publish_tf: true), so the pose is identical. The camera's
-mount (base_footprint -> camera optical frame) is static: looked up once.
-"""
+"""Robot pose in odom from /odometry/filtered, instead of a TF listener."""
 
 import math
 from collections import deque
@@ -29,10 +20,6 @@ def yaw_of(x, y, z, w):
 class OdomPoseBuffer:
     """Planar robot poses (t, x, y, yaw) with interpolation at a stamp."""
 
-    # 0.25 s, not 0.1: under load the newest odometry can lag an image by more
-    # than 0.1 s; with 0.1 the tracker skipped 31 frames in 10 s and the target
-    # flickered LOST (first driving test, 2026-11-12). Holding the last pose
-    # for 0.25 s at 0.06-0.26 m/s is 1.5-6.5 cm.
     def __init__(self, maxlen=500, max_extrapolate_s=0.25):
         self.buf = deque(maxlen=maxlen)       # 500 at 50 Hz = 10 s
         self.max_extrapolate_s = max_extrapolate_s
@@ -46,8 +33,6 @@ class OdomPoseBuffer:
         return self.buf[-1] if self.buf else None
 
     def at(self, t):
-        """(x, y, yaw) at time t, or None if t is outside the buffer
-        (beyond max_extrapolate_s past the newest pose is refused)."""
         if not self.buf:
             return None
         b = self.buf

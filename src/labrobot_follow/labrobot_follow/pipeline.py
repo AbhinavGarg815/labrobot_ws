@@ -1,15 +1,4 @@
-"""The per-frame person pipeline, independent of ROS.
-
-Used by the live node (scripts/person_tracker.py) and by the offline bag
-evaluator (tools/eval_follow_bag.py), so both run exactly the same code:
-
-    detect (pose) -> re-ID -> track (with camera-rotation compensation)
-    -> 3D per track in odom -> target identity -> target Kalman filter
-
-Inputs per frame: RGB uint8, raw depth uint16 (mm, aligned to colour),
-camera intrinsics K, the camera pose in odom (R, t) at the image time, and
-the image time in seconds.
-"""
+"""The per-frame person pipeline, independent of ROS."""
 
 import math
 import time
@@ -46,7 +35,7 @@ class PersonPipeline:
         self.pending_select = None
         self.events = []          # human-readable target events since the last frame
 
-    # ------------------------------------------------------------ commands
+    # commands
     def select_nearest(self):
         self.pending_select = ('nearest',)
 
@@ -61,7 +50,7 @@ class PersonPipeline:
         self.kf.reset()
         self.events.append('released by operator')
 
-    # ------------------------------------------------------------ frame
+    # frame
     def process(self, rgb, depth, K, R, tcam, ts):
         """Returns (tracks, state dict, stage times ms)."""
         times = {}
@@ -114,8 +103,6 @@ class PersonPipeline:
         s_along, s_across = geo.measurement_cov_cam(p_cam, K[0, 0])
         cov = geo.ground_cov(ray / rng, s_along, s_across)
         bearing = math.atan2(-p_cam[0], p_cam[2])     # + = to the camera's left
-        # range = distance ON THE FLOOR from the camera (not along the tilted
-        # optical axis), which is what tape marks and the stand-off mean
         return p_odom[:2], cov, rng, bearing
 
     def _plausible(self, tr, ts):
@@ -177,8 +164,6 @@ class PersonPipeline:
                 self.kf.init(xy, cov, ts)
             else:
                 self.kf.predict(ts)
-                # a measurement far outside the filter's belief is a depth
-                # outlier (hit something else), not the person teleporting
                 if self.kf.mahalanobis2(xy, cov) <= CHI2_2D_99 * 4:
                     self.kf.update(xy, cov, ts)
                 else:

@@ -1,37 +1,20 @@
 <?xml version="1.0"?>
-<!--
-  Single source of truth for every calibratable constant on the labrobot.
-
-  Anything that has to match the physical robot lives here and nowhere else, so
-  a calibration run touches exactly one file. The values below are measured, not
-  guessed; where a number is still provisional it says so explicitly.
--->
+<!-- Single source of truth for every calibratable constant on the labrobot. -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <!-- =====================================================================
-       Drivetrain
-       ===================================================================== -->
+  <!-- Drivetrain ===================================================================== -->
 
   <!-- Measured on the physical robot. -->
   <xacro:property name="wheel_radius" value="0.050"/>
   <xacro:property name="wheel_width"  value="0.026"/>
 
-  <!-- Distance between the two wheel contact patches.
-
-       Measured outer-face to outer-face across both wheels = 0.300 m; the
-       contact patch sits at the middle of each tyre, so:
-           separation = 0.300 - wheel_width = 0.274 m
-       The previous value (0.2445) was the distance between the wheel *joint
-       origins*, which is 16 mm per side too narrow and under-rotates the robot
-       by ~10.8%. Refine this with a UMBmark spin test, not by re-measuring. -->
+  <!-- Distance between the two wheel contact patches. -->
   <xacro:property name="wheel_separation" value="0.274"/>
 
-  <!-- Wheel joint origins, taken from the CAD export. These position the wheel
-       *meshes*; the kinematic track width above is what the controller uses. -->
+  <!-- Wheel joint origins, taken from the CAD export. -->
   <xacro:property name="wheel_joint_y" value="0.12225"/>
 
-  <!-- RMCS-5030 + RMCS-2303. The encoder reports 52 counts per base-motor
-       revolution (13 lines x 4, quadrature) through a 1:241 gearbox. -->
+  <!-- RMCS-5030 + RMCS-2303. -->
   <xacro:property name="encoder_counts_per_motor_rev" value="52"/>
   <xacro:property name="gear_ratio"                   value="241"/>
   <!-- 52 * 241 = 12532 counts per wheel revolution (25.07 um of travel each). -->
@@ -40,90 +23,30 @@
   <!-- Hard mechanical ceiling: 60 rpm at the output shaft. -->
   <xacro:property name="max_wheel_rpm" value="60.0"/>
 
-  <!-- =====================================================================
-       Chassis geometry
 
-       Derived from a height-banded cross-section analysis of base_link.stl:
-       a full-width body up to ~0.15 m, then a thin mast carrying the camera.
-       ===================================================================== -->
-
-  <xacro:property name="body_length" value="0.420"/>   <!-- X -->
-  <xacro:property name="body_width"  value="0.406"/>   <!-- Y -->
+  <xacro:property name="body_length" value="0.420"/>   
+  <xacro:property name="body_width"  value="0.406"/>   
   <xacro:property name="body_height" value="0.150"/>   <!-- Z, ground to top -->
 
-  <!-- Aluminium-extrusion mast carrying the camera. Measured from the complete
-       mesh over z = 0.20..0.70: X spans -11.18..10.18 mm (21.35) and Y spans
-       -57.47..57.47 mm (114.95), i.e. symmetric about the centre line. Only
-       the X axis is extrusion-thickness thin; the section is a ~21 x 115 mm
-       rectangle standing 680 mm tall.
-
-       Between z = 0.75 and the camera the section grows to 26 x 121 mm where
-       the mounting bracket sits, so the collision box below uses that larger
-       envelope for the whole mast rather than modelling the step. -->
-  <xacro:property name="mast_length" value="0.026"/>   <!-- X -->
-  <xacro:property name="mast_width"  value="0.121"/>   <!-- Y -->
+  <!-- Aluminium-extrusion mast carrying the camera. -->
+  <xacro:property name="mast_length" value="0.026"/>   
+  <xacro:property name="mast_width"  value="0.121"/>   
   <xacro:property name="mast_top"    value="0.830"/>   <!-- Z of mast top -->
   <xacro:property name="mast_y"      value="0.0"/>     <!-- section is centred -->
 
-  <!-- Casters: 4 SWIVEL (castoring), one per corner of the base. They pivot to
-       trail the direction of travel, so they add no rolling constraint - but the
-       swing itself pushes the robot sideways at each direction change (measured:
-       ~14 mm over a 360 deg spin). Modelled as zero-friction contact points.
-       PROVISIONAL - the corner inset and caster radius have not been measured.
-       They only affect simulated contact, never the real robot or navigation. -->
+  <!-- Casters: 4 SWIVEL (castoring), one per corner of the base. -->
   <xacro:property name="caster_radius"  value="0.010"/>
   <xacro:property name="caster_inset_x" value="0.170"/>
   <xacro:property name="caster_inset_y" value="0.170"/>
 
-  <!-- =====================================================================
-       Sensor mounting
-       ===================================================================== -->
+  <!-- Sensor mounting ===================================================================== -->
 
-  <!-- Camera mount orientation, MEASURED from the floor on 2026-07-30, not
-       taken from CAD.
+  <!-- Camera mount orientation, MEASURED from the floor on 2026-07-30, not taken from CAD. -->
+  <xacro:property name="camera_pitch" value="0.188146"/>   
+  <xacro:property name="camera_roll"  value="-0.018588"/>  
 
-       The design figure is 15 deg. The measured tilt relative to the GROUND is
-       10.78 deg, established by a direct A/B test rather than by reasoning about
-       sign conventions: set the URDF to each candidate and see which one makes
-       the depth-measured floor come out flat.
-
-           URDF 10.60 deg -> residual -0.21 deg   (flat)
-           URDF 15.00 deg -> residual +4.24 deg   (out by over 4 deg)
-
-       The two residuals differ by 4.44 deg against a URDF difference of 4.40 deg,
-       i.e. the measurement tracks the setting one-for-one, so it is linear and
-       self-consistent rather than an artefact. Solving from each point
-       separately gives 10.81 and 10.76 deg.
-
-       The user reports the floor is flat and the robot sits at 0 deg pitch, and
-       the residual at 10.78 is consistent with that. So the 4.2 deg is not body
-       pitch and not floor slope - it means the camera simply is not at 15 deg to
-       the mast. Worth checking the bracket and whether the mast is square to the
-       base; see docs/PROJECT_REPORT.md.
-
-       There is also 1.06 deg of roll that the design did not have at all.
-
-       It is definitely robot-fixed rather than a sloping floor: repeating the
-       measurement with the robot rotated 180 deg gave the SAME sign, where a
-       floor slope would have flipped. That same decomposition puts the floor
-       itself level to 0.25 deg. Before the correction, the 4.4 deg error
-       displaced points at 2 m by 154 mm; after it, 10 mm.
-
-       Note the 15 deg is still baked into the camera STL, so the mesh is
-       carried by the unrotated camera_mount_link and only camera_link (the
-       frame the RealSense driver hangs its own frames beneath) is rotated. -->
-  <xacro:property name="camera_pitch" value="0.188146"/>   <!-- 10.78 deg -->
-  <xacro:property name="camera_roll"  value="-0.018588"/>  <!-- -1.06 deg -->
-
-  <!-- Counter-rotation for the VISUAL mesh only.
-
-       The STL was exported with the design's 15 deg baked in, but the as-built
-       camera is at 10.78 deg. Without this the RViz model would draw the camera
-       pointing 4.22 deg away from its own TF axes - a discrepancy that looks
-       exactly like a TF bug and would cost someone an hour during SLAM work.
-       Purely cosmetic: collisions use camera_pitch directly, and the frames come
-       from camera_link. -->
-  <xacro:property name="camera_visual_pitch" value="-0.073652"/>  <!-- -4.22 deg -->
+  <!-- Counter-rotation for the VISUAL mesh only. -->
+  <xacro:property name="camera_visual_pitch" value="-0.073652"/>  
   <xacro:property name="camera_visual_x"     value="0.044074"/>
   <xacro:property name="camera_visual_y"     value="-0.001848"/>
   <xacro:property name="camera_visual_z"     value="-0.843412"/>
@@ -141,9 +64,6 @@
   <!-- Colour imager offset from the camera body origin. -->
   <xacro:property name="color_offset_y" value="0.015"/>
 
-  <!-- =====================================================================
-       Inertial properties (from the CAD mass properties export)
-       ===================================================================== -->
 
   <xacro:property name="base_mass"   value="5.000041537314476"/>
   <xacro:property name="wheel_mass"  value="0.23373449342708078"/>

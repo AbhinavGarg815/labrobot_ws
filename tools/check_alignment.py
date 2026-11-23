@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
-"""Is the robot localised correctly? Measure it against the saved map.
+"""Is the robot localised correctly?
 
     python3 tools/check_alignment.py
-
-Projects the live aligned depth image into the MAP frame using the current
-map->camera transform, keeps returns that are obstacles (0.15-0.90 m above the
-floor, within 2.5 m where depth noise is small), and asks the saved /map what is
-at each one. If localisation is right, live obstacles land on cells the map
-already marks occupied (or within a cell or two of them). If it is wrong they
-land in mapped free space.
-
-This is independent of RTAB-Map's own verdict, which is the point: RTAB-Map
-reporting "localised" and the pose being right are two different claims.
 """
 import math, sys, time
 import numpy as np, rclpy, tf2_ros
@@ -40,9 +30,7 @@ while time.time() - t0 < 10 and not all(k in st for k in ('d', 'k', 'map')):
 missing = [k for k in ('d', 'k', 'map') if k not in st]
 if missing: print(f'  missing: {missing}'); sys.exit(1)
 d, K, M = st['d'], st['k'], st['map']
-# Wait for TF to fill. The image/map messages can all arrive before the TF
-# buffer holds the camera chain, and a lookup then raises "frame does not
-# exist" - which reads like a broken TF tree rather than a race.
+# Wait for TF to fill.
 t1 = time.time()
 while not b.can_transform(M.header.frame_id, d.header.frame_id, rclpy.time.Time()):
     rclpy.spin_once(n, timeout_sec=0.05)

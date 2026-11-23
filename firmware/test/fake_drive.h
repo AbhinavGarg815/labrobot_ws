@@ -1,9 +1,4 @@
 // A simulated RMCS-2303 for host-side tests.
-//
-// It consumes whatever the firmware transmitted, parses it with an independent
-// implementation of the MODBUS ASCII rules, and replies. Because the parsing
-// here is written separately from rmcs2303.cpp, a framing bug in either one
-// shows up as a test failure rather than cancelling out.
 
 #ifndef LABROBOT_TEST_FAKE_DRIVE_H
 #define LABROBOT_TEST_FAKE_DRIVE_H
@@ -24,13 +19,8 @@ class FakeDrive {
 
   // Every write the firmware performed, in order: (address, value).
   std::vector<std::pair<uint8_t, uint16_t>> writes;
-  // Reads matter as much as writes: wheel velocity is differentiated from
-  // consecutive position reads, so a firmware that stops reading has stale
-  // odometry without ever failing a transaction.
   std::vector<uint8_t> reads;
 
-  // When true, requests are consumed but never answered - simulates an
-  // unpowered or unplugged drive so timeout handling can be exercised.
   bool silent = false;
 
   // Corrupts the next reply's LRC, to exercise error recovery.
@@ -42,8 +32,7 @@ class FakeDrive {
     registers[22] = static_cast<uint16_t>(raw >> 16);
   }
 
-  // Processes any complete request sitting in port.tx and queues the reply
-  // into port.rx.
+  // Processes any complete request sitting in port.tx and queues the reply into port.rx.
   void service(HardwareSerial& port) {
     size_t start;
     while ((start = port.tx.find(':')) != std::string::npos) {

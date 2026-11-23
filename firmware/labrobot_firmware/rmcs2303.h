@@ -1,24 +1,4 @@
 // Non-blocking MODBUS ASCII master for the Rhino RMCS-2303 DC servo drive.
-//
-// Why not the vendor library (RMCS2303drive):
-//   1. Its `port`/`softport` are file-scope globals rather than members, so two
-//      driver objects silently share one UART. Driving two motors on Serial1
-//      and Serial2 - exactly our topology - is impossible with it.
-//   2. Its LRC handler calls port->end() on a checksum mismatch, permanently
-//      killing the motor link after a single line glitch.
-//   3. It blocks: delay(50) per write, delay(20) per read.
-//   4. It uses Arduino String throughout, fragmenting the Mega's 8 KB SRAM.
-//
-// This driver instead owns its HardwareSerial, never blocks, never allocates,
-// and treats a bad frame as a retryable error.
-//
-// Protocol (RMCS-2303 Operating Manual v1.0), MODBUS ASCII at 9600 baud:
-//   ':' slave(2 hex) fc(2) addrHi(2) addrLo(2) dataHi(2) dataLo(2) lrc(2) CRLF
-//   LRC = two's complement of the sum of the raw (pre-hex) bytes.
-//
-// Timing: a write costs ~35 ms and a 2-register read ~37 ms on the wire, so a
-// single drive sustains only ~13-27 transactions/s. Both drives sit on separate
-// UARTs and are therefore pumped concurrently.
 
 #ifndef LABROBOT_RMCS2303_H
 #define LABROBOT_RMCS2303_H
@@ -27,8 +7,7 @@
 
 namespace labrobot {
 
-// Register data addresses. Note they step by 2: each 16-bit register occupies
-// two address units, so a 2-register read at 20 returns registers 20 and 22.
+// Register data addresses.
 enum Rmcs2303Register : uint8_t {
   REG_EEPROM_SLAVE   = 0,   // write 0xNNFF to store params / set slave id NN
   REG_CONTROL        = 2,   // MODE[15:8] | CTRL[7:0]
@@ -45,8 +24,7 @@ enum Rmcs2303Register : uint8_t {
   REG_SPEED_FB       = 24,  // base-motor rpm
 };
 
-// Values for REG_CONTROL. High byte selects the mode, low byte the control
-// bits: bit0 = enable, bit2 = brake, bit3 = direction (0 = CW, 1 = CCW).
+// Values for REG_CONTROL.
 enum Rmcs2303Control : uint16_t {
   CTRL_ENABLE_CW    = 0x0101,
   CTRL_ENABLE_CCW   = 0x0109,
@@ -67,9 +45,7 @@ enum class TxnState : uint8_t {
   FAILED,    // timeout or malformed reply; retryable
 };
 
-// Why the last transaction was rejected. A single "bad frame" counter cannot
-// distinguish a wrong slave id (wiring/jumpers) from a bad LRC (line noise)
-// from a timeout (no power), which are entirely different faults to chase.
+// Why the last transaction was rejected.
 enum class ParseError : uint8_t {
   NONE,
   TIMEOUT,      // no reply at all
@@ -86,15 +62,12 @@ const char* parseErrorName(ParseError e);
 
 class Rmcs2303 {
  public:
-  // The drive's reply must arrive within this window. A 2-register read is
-  // ~37 ms on the wire at 9600 baud, so this leaves generous slack without
-  // stalling the control loop for long on a dead link.
+  // The drive's reply must arrive within this window.
   static const uint16_t kTimeoutMs = 120;
 
   void begin(HardwareSerial* port, uint8_t slave_addr);
 
-  // Pump the receive state machine. Must be called from loop() as often as
-  // possible; it never blocks.
+  // Pump the receive state machine.
   void poll();
 
   bool idle() const { return state_ == TxnState::IDLE; }
@@ -108,32 +81,24 @@ class Rmcs2303 {
   bool beginWrite(uint8_t reg_addr, uint16_t value);
   bool beginRead(uint8_t reg_addr, uint8_t reg_count);
 
-  // Valid only while complete(). Registers arrive in address order.
+  // Valid only while complete().
   uint16_t responseRegister(uint8_t index) const;
   uint8_t responseCount() const { return resp_reg_count_; }
 
-  // Diagnostics. crcErrors counts frames that arrived but were rejected for
-  // any reason; lastError says which, and lastFrame gives the raw bytes.
+  // Diagnostics.
   uint16_t timeouts() const { return timeouts_; }
   uint16_t crcErrors() const { return crc_errors_; }
   ParseError lastError() const { return last_error_; }
 
-  // The most recent reply as received, valid or not, NUL-terminated. Captured
-  // before validation so a rejected frame can still be inspected.
+  // The most recent reply as received, valid or not, NUL-terminated.
   const char* lastFrame() const { return last_frame_; }
   uint8_t lastFrameLen() const { return last_frame_len_; }
 
-  // The request that produced lastFrame(), NUL-terminated. Latched at parse
-  // time rather than at send time: reporting the in-flight request beside the
-  // previous reply makes the two look mismatched and sends you chasing ghosts.
+  // The request that produced lastFrame(), NUL-terminated.
   const char* lastRequest() const { return last_request_; }
 
  private:
   static const uint8_t kRxBufferSize = 48;
-  // Verified against the hardware 2026-07-30: the count field is in REGISTERS,
-  // and the drive clamps it at 2 (a count of 4 still returns byte count 4).
-  // Two is therefore both the maximum useful value and exactly what the 32-bit
-  // position read needs.
   static const uint8_t kMaxResponseRegs = 2;
 
   void sendFrame(uint8_t fc, uint8_t addr, uint16_t value);

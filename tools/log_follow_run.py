@@ -3,14 +3,6 @@
 
     python3 tools/log_follow_run.py docs/logs/followrun_NAME.jsonl [--start] [--secs 150]
     python3 tools/log_follow_run.py --summary docs/logs/followrun_NAME.jsonl
-
-Logs /labrobot/follow_status, /labrobot/target_event, /labrobot/follow_goal,
-/labrobot/follow_plan, the target state (2 Hz) and the robot pose. With
---start it sends "start" on /labrobot/follow_cmd once a person is in view
-(again every 5 s while the follower stays IDLE), and records --secs seconds
-from the moment following begins. It never commands motion itself: whether
-the robot moves depends on how the follower was started (scripts/follow.sh
-with or without --dry-run).
 """
 
 import argparse

@@ -1,5 +1,4 @@
-# labrobot named waypoints - map frame. Managed by waypoints.py.
-# Re-save after building a NEW map; lifelong-SLAM updates keep the frame.
+# labrobot named waypoints - map frame.
 waypoints:
   wp1:
     saved: '2026-10-14T16:37:13'

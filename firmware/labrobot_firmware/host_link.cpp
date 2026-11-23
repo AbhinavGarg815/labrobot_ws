@@ -3,9 +3,7 @@
 namespace labrobot {
 
 namespace {
-// 60 wheel-rpm = 2*pi rad/s = 6283 mrad/s. Used as the scale anchor so the
-// mechanical maximum maps exactly onto the drive's maximum with no rounding
-// drift at the top of the range.
+// 60 wheel-rpm = 2*pi rad/s = 6283 mrad/s.
 const int32_t kMaxWheelMradS = 6283;
 }  // namespace
 
@@ -16,8 +14,6 @@ void HostLink::begin(HardwareSerial* port, WheelDrive* left, WheelDrive* right,
   right_ = right;
   cfg_ = config;
   parser_.reset();
-  // Treat startup as "a command just arrived" so the watchdog does not fire
-  // before the host has had a chance to connect.
   last_command_ms_ = millis();
   last_status_ms_ = last_command_ms_;
   last_byte_ms_ = last_command_ms_;
@@ -26,13 +22,11 @@ void HostLink::begin(HardwareSerial* port, WheelDrive* left, WheelDrive* right,
 int16_t HostLink::wheelMradSToBaseRpm(int32_t mrad_s) const {
   const int32_t max_base = static_cast<int32_t>(cfg_.max_wheel_rpm) * cfg_.gear_ratio;
 
-  // Clamp before scaling. The datasheet warns that commanding a speed the motor
-  // cannot reach gives an "uncertain result", so an over-range request is
-  // saturated rather than wrapped.
+  // Clamp before scaling.
   if (mrad_s > kMaxWheelMradS) mrad_s = kMaxWheelMradS;
   if (mrad_s < -kMaxWheelMradS) mrad_s = -kMaxWheelMradS;
 
-  // Integer scaling, rounded half away from zero. 6283 * 14460 fits in int32.
+  // Integer scaling, rounded half away from zero.
   const int32_t num = mrad_s * max_base;
   const int32_t half = kMaxWheelMradS / 2;
   const int32_t rounded = (num >= 0) ? (num + half) / kMaxWheelMradS
@@ -41,7 +35,7 @@ int16_t HostLink::wheelMradSToBaseRpm(int32_t mrad_s) const {
 }
 
 int16_t HostLink::countsPerSecToMradS(float counts_per_sec) const {
-  // rad/s = (counts/s / counts_per_rev) * 2*pi  ->  mrad/s scales by 1000.
+  // rad/s = (counts/s / counts_per_rev) * 2*pi -> mrad/s scales by 1000.
   const float mrad = counts_per_sec * static_cast<float>(kMaxWheelMradS) /
                      (static_cast<float>(cfg_.counts_per_wheel_rev) *
                       static_cast<float>(cfg_.max_wheel_rpm) / 60.0f);
@@ -79,8 +73,6 @@ void HostLink::handleFrame() {
     case protocol::kCmdStop:
       left_->brake();
       right_->brake();
-      // A stop is an explicit command, so it also refreshes the watchdog: the
-      // host is present and has asked for zero, which is not a comms failure.
       last_command_ms_ = now_ms_;
       had_first_command_ = true;
       watchdog_tripped_ = false;
@@ -146,8 +138,6 @@ void HostLink::poll() {
   const uint32_t now = millis();
   now_ms_ = now;
 
-  // Discard a half-received frame after a gap, so a truncation cannot consume
-  // the following frame's header. See the FrameParser recovery note.
   if (static_cast<int32_t>(now - last_byte_ms_) >= static_cast<int32_t>(cfg_.frame_gap_ms)) {
     parser_.reset();
   }
@@ -159,11 +149,7 @@ void HostLink::poll() {
     }
   }
 
-  // Watchdog. Only armed once the host has spoken at least once, so a board
-  // powered up with no host sits quietly braked instead of reporting a fault.
-  // Signed difference so the comparison stays correct even if last_command_ms_
-  // is momentarily ahead of `now`, and across the 49-day millis() rollover.
-  // The unsigned form wraps to a huge positive value and fires instantly.
+  // Watchdog.
   const int32_t since_command = static_cast<int32_t>(now - last_command_ms_);
   if (had_first_command_ && since_command >= static_cast<int32_t>(cfg_.command_timeout_ms)) {
     tripWatchdog();
